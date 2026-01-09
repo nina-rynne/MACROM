@@ -411,7 +411,14 @@ create_scenario_comparison_dashboard <- function(scenario_results,
                                                  save_plot = FALSE,
                                                  filename = NULL,
                                                  print_insights = FALSE,
-                                                 verbose = TRUE) {
+                                                 verbose = TRUE,
+                                                 include_temperature = TRUE,
+                                                 include_emissions = TRUE,
+                                                 include_controls = TRUE,
+                                                 include_costs = TRUE,
+                                                 color_palette = "viridis",
+                                                 width = 297,      # A4 landscape width (mm)
+                                                 height = 210) {     # A4 landscape height (mm)
   
   # Extract scenario results component from full results object
   if ("scenario_results" %in% names(scenario_results)) {
