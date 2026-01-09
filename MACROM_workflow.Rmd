@@ -1,0 +1,465 @@
+---
+title: "MACROM: Optimal Control Workflow for Climate Temperature Overshoot"
+author: "Nina Rynne"
+institution: "Griffith University"
+output: html_document
+date: "January 2026"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# ==============================================================================
+# MACROM: An Optimal Control Model for Balancing Climate Change 
+# Abatement and Damage Trade-offs
+# 
+# Authors: Nina Rynne, Michael Bode, Melanie Roberts, Ryan Heneghan
+# Institution: Griffith University
+# 
+# Copyright (c) 2025 Nina Rynne
+# Licensed under CC-BY-4.0 - see LICENSE file for details
+# 
+# Citation: If you use this code, please cite:
+#   Rynne, N., Bode, M., Roberts, M., & Heneghan, R. (2025). 
+#   MACROM: An Optimal Control Model for Balancing Climate Change 
+#   Abatement and Damage Trade-offs.
+#   [Full citation to be added upon publication]
+# 
+# Version: 1.0.0
+# Last updated: January 2026
+# 
+# Repository: https://github.com/nina-rynne/MACROM
+# Contact: nina.rynne@griffithuni.edu.au
+# ==============================================================================
+
+# ABOUT MACROM:
+# This workflow runs the complete MACROM optimal control model. MACROM determines
+# optimal climate mitigation and CDR strategies by balancing abatement costs 
+# against temperature-related damages under different SSP emission scenarios.
+#
+# This is the primary user interface - public users interact only with this file.
+# For detailed instructions, prerequisites, and troubleshooting, see USER_GUIDE.md
+
+```{r libraries}
+
+# ==============================================================================
+# Required Libraries
+# ==============================================================================
+# Install any missing packages using: install.packages("package_name")
+
+# ============================================
+# Data Manipulation and Transformation
+# ============================================
+library(dplyr)        # Data manipulation
+library(tidyr)        # Data reshaping
+library(purrr)        # Functional programming tools
+library(tidyverse)    # Data science toolkit
+
+# ============================================
+# File Handling and I/O
+# ============================================
+library(readr)        # Reading data files
+library(here)         # File path management
+library(yaml)         # YAML file handling
+library(Cairo)        # PDF export
+
+# ============================================
+# Parallel Processing
+# ============================================
+library(parallel)     # Parallel processing
+library(foreach)      # Parallel iteration
+library(doParallel)   # Parallel backend
+
+# ============================================
+# Data Analysis and Statistics
+# ============================================
+library(lhs)          # Latin hypercube sampling
+library(iterators)    # Iterator support
+
+# ============================================
+# Visualisation
+# ============================================
+library(ggplot2)      # Data visualisation
+library(cowplot)      # Plot arrangement
+library(patchwork)    # Plot composition
+library(viridisLite)  # Colourblind friendly palettes
+library(viridis)      # Colourblind friendly palettes
+library(colorspace)   # Advanced colour manipulation
+library(scales)       # Scale functions for visualisation
+```
+
+```{r data_preparation_call}
+# ==============================================================================
+# Data Preparation
+# ==============================================================================
+# Import and prepare emissions and economic data
+# This section imports raw SSP scenario data and interpolates it to annual time steps
+
+# Source data preparation functions
+source(here::here("src", "data_preparation.R"))
+
+# Import emissions and economic data
+emissions_imported <- import_ssp_emissions("emissions.csv")
+economic_imported <- import_ssp_economic("gwp.csv")
+
+# Interpolate data to annual time step (2020-2100)
+# USER CHOICE: Modify start_year, end_year, or dt if different time range/step is needed
+emissions_df <- interpolate_ssp_emissions(
+  emissions_df = emissions_imported,
+  dt = 1,
+  start_year = 2020,
+  end_year = 2100
+)
+
+economic_df <- interpolate_ssp_economic(
+  economic_df = economic_imported,
+  dt = 1,
+  start_year = 2020,
+  end_year = 2100
+)
+```
+
+```{r latin_hypercube_sampling_call, eval=FALSE}
+# ==============================================================================
+# PARAMETER APPROACH 1: Multiple Parameter Sets (Sensitivity Analysis)
+# ==============================================================================
+# ⚠️ USER CHOICE: Use EITHER this chunk OR the fixed_model_parameters_call chunk below
+# Do NOT run both - they are mutually exclusive options
+#
+# This approach generates multiple parameter combinations for uncertainty quantification
+# Parameter ranges defined in: parameter_details.yml
+#
+# WHEN TO USE:
+# - Exploring parameter sensitivity
+# - Uncertainty quantification
+# - Generating confidence intervals
+#
+# NOTE: Significantly increases computation time
+# Recommended: 100-500 samples for thorough analysis
+
+source(here::here("src", "latin_hypercube_sampling.R"))
+source(here::here("src", "model_parameters.R"))
+
+# USER CHOICE: Change to desired number of parameter sets to generate
+# More samples = better coverage but longer runtime
+lhs_parameter_df <- generate_lhs_samples(n_samples = 500, seed = 12345)
+
+# Add fixed model parameters to the LHS samples
+parameter_df <- add_fixed_parameters(lhs_parameter_df)
+```
+
+```{r fixed_model_parameters_call}
+# ==============================================================================
+# PARAMETER APPROACH 2: Single Parameter Set (Recommended for most analyses)
+# ==============================================================================
+# ⚠️ USER CHOICE: Use EITHER this chunk OR the latin_hypercube_sampling_call chunk above
+# Do NOT run both - they are mutually exclusive options
+#
+# This approach uses a single predefined parameter set
+# Parameter values defined in: parameter_details_fixed.yml
+#
+# WHEN TO USE:
+# - Comparing across SSP scenarios
+# - Analysing delayed deployment effects
+# - Generating primary results with best-estimate parameters
+# - Quick test runs
+#
+# RECOMMENDED FOR: Most standard analyses and publication figures
+
+source(here::here("src", "model_parameters.R"))
+
+# Use predefined parameter set
+parameter_df <- create_params_dataframe()
+```
+
+```{r scenario_comparison_analysis, eval=FALSE}
+# ==============================================================================
+# Scenario Comparison Analysis
+# ==============================================================================
+# Compare optimal control solutions across different SSP baseline scenarios
+# 
+# REQUIREMENTS: Must use single parameter set (parameter_df with 1 row)
+# OUTPUTS: Saved automatically to output/ directory
+# RUNTIME: ~5-15 minutes for 5 scenarios with parallel processing
+
+# Source required functions
+source(here::here("src", "optimal_control_core_V3.R"))
+source(here::here("src", "scenario_comparison.R"))
+
+# USER CHOICE: Select which SSP scenarios to compare
+scenarios_to_compare <- c("SSP1-Baseline", "SSP2-Baseline", "SSP3-Baseline", 
+                          "SSP4-Baseline", "SSP5-Baseline")
+
+# USER CHOICE: Delay settings (typically keep at 0 for baseline comparison)
+mitigation_delay <- 0  # Years before mitigation begins
+cdr_delay <- 0         # Years before CDR deployment begins
+
+# Run scenario comparison
+scenario_comparison_results <- run_scenario_comparison(
+  parameter_df = parameter_df[1, ],      # Must be single row
+  emissions_df = emissions_df,
+  economic_df = economic_df,
+  scenarios = scenarios_to_compare,
+  mitigation_delay_years = mitigation_delay,
+  cdr_delay_years = cdr_delay,
+  use_parallel = TRUE,                   # Set FALSE if parallel issues occur
+  save_results = TRUE,                   # Automatically saves to output/
+  verbose = FALSE                        # Set TRUE for detailed progress
+)
+
+# Display summary
+if (!is.null(scenario_comparison_results$comparison_summary)) {
+  print(scenario_comparison_results$comparison_summary)
+}
+```
+
+```{r scenario_comparison_visualisation, eval=FALSE}
+# ==============================================================================
+# Scenario Comparison Visualisation
+# ==============================================================================
+# Create publication-quality visualisations comparing optimal control solutions
+# OUTPUTS: Saved automatically to figs/ directory
+
+# Source visualisation functions
+source(here::here("src", "scenario_comparison_visualisation.R"))
+
+# Check if results exist
+if (!exists("scenario_comparison_results")) {
+  stop("Scenario results not found. Please run the scenario_comparison_analysis chunk first.")
+}
+
+# Create comprehensive dashboard
+dashboard <- create_scenario_dashboard(
+  scenario_results = scenario_comparison_results,
+  
+  # USER CHOICE: Customise dashboard
+  include_temperature = TRUE,
+  include_emissions = TRUE,
+  include_controls = TRUE,
+  include_costs = TRUE,
+  
+  # USER CHOICE: Styling
+  color_palette = "viridis",
+  save_plot = TRUE,
+  width = 297,      # A4 landscape width (mm)
+  height = 210,     # A4 landscape height (mm)
+  verbose = TRUE
+)
+
+# Display the dashboard
+print(dashboard)
+```
+
+```{r parameter_importance_analysis, eval=FALSE}
+# ==============================================================================
+# Parameter Importance Analysis
+# ==============================================================================
+# Analyse which parameters have the greatest influence on model outcomes
+# 
+# REQUIREMENTS: Must use LHS parameter sampling (run latin_hypercube_sampling_call)
+# OUTPUTS: Saved automatically to output/ directory
+# RUNTIME: Depends on number of LHS samples (e.g., 500 samples = 1-3 hours)
+
+# Source required functions
+source(here::here("src", "optimal_control_core_V3.R"))
+source(here::here("src", "parameter_importance.R"))
+
+# USER CHOICE: Select scenario for parameter importance analysis
+scenario_for_importance <- "SSP2-Baseline"  # Typically use middle-of-road scenario
+
+# Run parameter importance analysis
+parameter_importance_results <- run_parameter_importance_analysis(
+  parameter_df = parameter_df,           # Must have multiple rows from LHS
+  emissions_df = emissions_df,
+  economic_df = economic_df,
+  scenario = scenario_for_importance,
+  use_parallel = TRUE,
+  save_results = TRUE,
+  verbose = FALSE
+)
+
+# Display summary
+if (!is.null(parameter_importance_results$importance_summary)) {
+  print(parameter_importance_results$importance_summary)
+}
+```
+
+```{r parameter_importance_visualisation, eval=FALSE}
+# ==============================================================================
+# Parameter Importance Visualisation
+# ==============================================================================
+# Create visualisations showing parameter sensitivities and correlations
+# OUTPUTS: Saved automatically to figs/ directory
+
+# Source visualisation functions
+source(here::here("src", "parameter_importance_visualisation.R"))
+
+# Check if results exist
+if (!exists("parameter_importance_results")) {
+  stop("Parameter importance results not found. Please run the parameter_importance_analysis chunk first.")
+}
+
+# Create parameter importance dashboard
+importance_dashboard <- create_parameter_importance_dashboard(
+  importance_results = parameter_importance_results,
+  
+  # USER CHOICE: Variables to analyse
+  outcome_variables = c("peak_temperature", "total_cost", "years_above_1p5"),
+  
+  # USER CHOICE: Styling
+  save_plot = TRUE,
+  width = 297,
+  height = 210,
+  verbose = TRUE
+)
+
+# Display the dashboard
+print(importance_dashboard)
+```
+
+```{r delayed_deployment_analysis, eval=FALSE}
+# ==============================================================================
+# Delayed Deployment Analysis
+# ==============================================================================
+# Analyse the effects of delaying mitigation and/or CDR deployment
+# 
+# REQUIREMENTS: Must use single parameter set (parameter_df with 1 row)
+# OUTPUTS: Saved automatically to output/ directory
+# RUNTIME: Scales with (max_delay / step_size)² × number of scenarios
+#          Example: 50-year max, 10-year steps, 5 scenarios = ~30 minutes
+
+# Source required functions
+source(here::here("src", "optimal_control_core_V3.R"))
+source(here::here("src", "delayed_deployment.R"))
+
+# USER CHOICE: Delay range and granularity
+max_delay_years <- 50        # Maximum delay to test (years)
+delay_step_size <- 10        # Step size (1 = yearly, 10 = every decade)
+
+# USER CHOICE: Scenarios to analyse
+# Options: "all" or vector like c("SSP2-Baseline", "SSP3-Baseline")
+scenarios_to_analyse <- "all"
+
+# Run delayed deployment analysis
+delayed_deployment_results <- run_unified_delayed_deployment(
+  parameter_df = parameter_df[1, ],      # Must be single row
+  emissions_df = emissions_df,
+  economic_df = economic_df,
+  scenarios = scenarios_to_analyse,
+  max_delay_years = max_delay_years,
+  delay_step_size = delay_step_size,
+  use_parallel = TRUE,
+  save_results = TRUE,
+  verbose = FALSE
+)
+
+# Display summary
+cat("\n=== DELAYED DEPLOYMENT ANALYSIS COMPLETE ===\n")
+cat("Delay range tested: 0 -", max_delay_years, "years\n")
+cat("Total runs:", length(delayed_deployment_results$results), "\n")
+```
+
+```{r delayed_deployment_visualisation, eval=FALSE}
+# ==============================================================================
+# Delayed Deployment Visualisation
+# ==============================================================================
+# Create heatmap visualisations showing how deployment delays affect outcomes
+# OUTPUTS: Saved automatically to figs/ directory
+
+# Source visualisation functions
+source(here::here("src", "delayed_deployment_visualisation.R"))
+
+# Check if results exist
+if (!exists("delayed_deployment_results")) {
+  stop("Delayed deployment results not found. Please run the delayed_deployment_analysis chunk first.")
+}
+
+# Create main dashboard
+dashboard <- create_delayed_deployment_dashboard(
+  deployment_results = delayed_deployment_results,
+  
+  # USER CHOICE: Variables to plot
+  # Options: "peak_temperature", "years_above_1p5", "abatement_cost", 
+  #          "temp_damage_cost", "total_cost", "mitig_cost", "remov_cost"
+  variables = c("peak_temperature"),
+  
+  # USER CHOICE: Visual features
+  add_contours = TRUE,
+  contour_alpha = 0.6,
+  add_arrows = FALSE,
+  show_infeasible = FALSE,
+  
+  # USER CHOICE: Styling
+  color_palettes = NULL,
+  shared_scale = FALSE,
+  save_plot = TRUE,
+  width = 297,
+  height = 210,
+  verbose = FALSE
+)
+
+# Display the dashboard
+print(dashboard)
+```
+
+```{r delayed_deployment_prebuilt_visualisation, eval=FALSE}
+# ==============================================================================
+# Convenience Wrapper Functions for Common Visualisations
+# ==============================================================================
+# These provide pre-configured shortcuts for standard analysis types
+
+# Temperature and Overshoot Analysis
+temperature_dashboard <- create_temperature_delay_dashboard(
+  deployment_results = delayed_deployment_results,
+  save_plot = FALSE,
+  filename = NULL
+)
+print(temperature_dashboard)
+
+# Cost Analysis with Gradient Arrows
+cost_dashboard <- create_cost_delay_dashboard(
+  deployment_results = delayed_deployment_results,
+  cost_variable = "abatement_cost",  # Options: "abatement_cost", "temp_damage_cost", "total_cost"
+  arrow_scale = 3.0,
+  min_magnitude = 0,
+  save_plot = FALSE,
+  filename = NULL
+)
+print(cost_dashboard)
+
+# Comprehensive Cost Comparison
+comprehensive_cost_dashboard <- create_comprehensive_cost_delay_dashboard(
+  deployment_results = delayed_deployment_results,
+  shared_scale = TRUE,
+  save_plot = FALSE,
+  filename = NULL,
+  height = 260
+)
+print(comprehensive_cost_dashboard)
+```
+
+# ==============================================================================
+# Workflow Complete
+# ==============================================================================
+# 
+# If all chunks have run successfully, you should now have:
+# ✓ Processed emissions and economic data for all SSP scenarios
+# ✓ Generated parameter sets (either fixed or LHS)
+# ✓ Optimal control solutions for selected scenarios
+# ✓ Publication-ready visualisations in figs/ directory
+# ✓ Results files saved in output/ directory
+#
+# NEXT STEPS:
+# - Load saved RDS files for detailed analysis
+# - Customise visualisations by modifying plotting parameters
+# - Run different parameter sets or scenarios
+# - See USER_GUIDE.md for advanced usage and troubleshooting
+#
+# GETTING HELP:
+# - Email: nina.rynne@griffithuni.edu.au
+# - Repository: https://github.com/nina-rynne/MACROM
+# - Issues: Submit via GitHub issue tracker
+#
+# Thank you for using MACROM!
+# ==============================================================================

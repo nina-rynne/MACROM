@@ -1,0 +1,45 @@
+# Model Parameters for Climate Optimal Control
+# Last updated: March 2025
+
+# === Climate/Physical Variables ===
+
+co2_conc_preind: 280 # Preindustrial CO2 concentration (ppm)
+co2_target_2100: 650 # CO2 emissions volume at 2100 to reach 1.5°C target (based on TCRE of 0.45)
+clim_temp_init: 1.2 # Initial global temperature anomaly (°C above pre-industrial, at 2020)
+tcre: 0.45 # Transient climate response to CO2 emissions
+
+# === Economic Parameters ===
+
+econ_dam_pct: 0.05 # proportion of GWP reduced by climate change
+disc_rate: 0.03 # future discounting 
+#cost_mitig_unit: 0.3  # cost per Gt, in trillion $
+#cost_remov_unit: 1.2  # cost per Gt, in trillion $
+
+vol_mitig_low: 1      # units at which cost_mitig_low applies
+cost_mitig_low: 0.01 # cost per Gt, in trillion $
+vol_mitig_peak: 50    # units at which cost_mitig_peak applies
+cost_mitig_peak: 1  # cost per Gt, in trillion $
+
+vol_remov_low: 1      # units at which cost_remov_low applies
+cost_remov_low: 0.01 # cost per Gt, in trillion $
+vol_remov_peak: 50    # units at which cost_remov_peak applies
+cost_remov_peak: 2  # cost per Gt, in trillion $
+
+
+
+# === Model Configuration ===
+# These parameters control model behavior rather than physical properties
+
+exp_mitig: 2 # Mitigation cost exponent
+exp_remov: 2 # CDR cost exponent
+exp_temp_anom: 2 # Temperature anomaly exponent
+
+# Existing shooting method parameters (for forward shooting)
+lambda_low: 0      # Lower bound for initial adjoint value (forward shooting)
+lambda_high: 500000     # Upper bound for initial adjoint value (forward shooting)
+
+# NEW: Backward shooting method parameters
+lambda_terminal_low: 0   # Lower bound for terminal adjoint value (backward shooting)
+lambda_terminal_high: 10000   # Upper bound for terminal adjoint value (backward shooting)
+
+
