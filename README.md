@@ -80,7 +80,7 @@ MACROM/
     ├── data_preparation.R
     ├── model_parameters.R
     ├── latin_hypercube_sampling.R
-    ├── optimal_control_core_V3.R
+    ├── optimal_control_core.R
     ├── scenario_comparison.R
     ├── scenario_comparison_visualisation.R
     ├── parameter_importance.R
@@ -118,11 +118,11 @@ The model uses optimal control theory to determine the most cost-effective combi
 
 If you use MACROM in your research, please cite:
 ```bibtex
-@article{rynne2025macrom,
+@article{rynne2026macrom,
   title={MACROM: An Optimal Control Model for Balancing Climate Change Abatement and Damage Trade-offs},
   author={Rynne, Nina and Bode, Michael and Roberts, Melanie and Heneghan, Ryan},
   journal={[Journal name]},
-  year={2025},
+  year={2026},
   publisher={[Publisher]},
   note={[Add DOI when available]}
 }
@@ -130,7 +130,7 @@ If you use MACROM in your research, please cite:
 
 **Plain text citation:**
 ```
-Rynne, N., Bode, M., Roberts, M., & Heneghan, R. (2025). 
+Rynne, N., Bode, M., Roberts, M., & Heneghan, R. (2026). 
 MACROM: An Optimal Control Model for Balancing Climate Change 
 Abatement and Damage Trade-offs. [Journal details to be added upon publication]
 ```

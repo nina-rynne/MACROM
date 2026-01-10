@@ -1,4 +1,4 @@
-# ==============================================================================
+ # ==============================================================================
 # Parameter Importance Visualisation Functions
 # 
 # Part of: MACROM: An Optimal Control Model for Balancing Climate Change Abatement 
@@ -356,7 +356,7 @@ create_damage_cost_spaghetti_plot <- function(solution_list,
 #' results across multiple parameter sets from Latin Hypercube Sampling. Plots are 
 #' arranged in a 3×2 grid with shared y-axis limits for comparable plots.
 #'
-#' @param parameter_results Output from run_parameter_importance(), or just the 
+#' @param importance_results Output from run_parameter_importance(), or just the 
 #'   successful_runs component
 #' @param save_plot Whether to save the plot as PDF (default: FALSE)
 #' @param filename Custom filename for saving (default: auto-generated with timestamp)
@@ -368,22 +368,22 @@ create_damage_cost_spaghetti_plot <- function(solution_list,
 #' @examples
 #' # Create dashboard from parameter importance results
 #' dashboard <- create_parameter_importance_dashboard(
-#'   parameter_results = results,
+#'   importance_results = results,
 #'   save_plot = TRUE,
 #'   print_insights = TRUE
 #' )
-create_parameter_importance_dashboard <- function(parameter_results, 
+create_parameter_importance_dashboard <- function(importance_results, 
                                                   save_plot = FALSE,
                                                   filename = NULL,
                                                   print_insights = FALSE,
                                                   verbose = TRUE) {
   
   # Extract successful_runs component from full results object
-  if ("successful_runs" %in% names(parameter_results)) {
-    solution_list <- parameter_results$successful_runs
+  if ("successful_runs" %in% names(importance_results)) {
+    solution_list <- importance_results$successful_runs
   } else {
     # Assume it's already the successful_runs component
-    solution_list <- parameter_results
+    solution_list <- importance_results
   }
   
   # Validate that we have solution data
@@ -475,9 +475,9 @@ create_parameter_importance_dashboard <- function(parameter_results,
     if (is.null(filename)) {
       # Extract scenario name from results for filename
       scenario_name <- "unknown_scenario"
-      if ("run_info" %in% names(parameter_results) && 
-          "scenario" %in% names(parameter_results$run_info)) {
-        scenario_name <- parameter_results$run_info$scenario
+      if ("run_info" %in% names(importance_results) && 
+          "scenario" %in% names(importance_results$run_info)) {
+        scenario_name <- importance_results$run_info$scenario
         # Clean scenario name for filename (remove spaces, special characters)
         scenario_name <- gsub("[^A-Za-z0-9-]", "_", scenario_name)
       }
@@ -496,7 +496,7 @@ create_parameter_importance_dashboard <- function(parameter_results,
   
   # Print insights if requested
   if (print_insights) {
-    print_parameter_importance_insights(parameter_results, verbose = verbose)
+    print_parameter_importance_insights(importance_results, verbose = verbose)
   }
   
   return(final_plot)
@@ -512,20 +512,20 @@ create_parameter_importance_dashboard <- function(parameter_results,
 #' including temperature ranges, cost patterns, strategy patterns, convergence 
 #' statistics, and parameter sensitivity observations
 #' 
-#' @param parameter_results Full results object from run_parameter_importance()
+#' @param importance_results Full results object from run_parameter_importance()
 #' @param verbose Whether to print section headers (default: TRUE)
 #' @return Invisibly returns the summary data frame with calculated metrics
-print_parameter_importance_insights <- function(parameter_results, verbose = TRUE) {
+print_parameter_importance_insights <- function(importance_results, verbose = TRUE) {
   
   # Extract summary
-  if (is.null(parameter_results$summary)) {
+  if (is.null(importance_results$summary)) {
     if (verbose) {
       cat("No summary available for insights analysis\n")
     }
     return(invisible(NULL))
   }
   
-  summary_df <- parameter_results$summary
+  summary_df <- importance_results$summary
   
   if (verbose) {
     cat("\n=== PARAMETER IMPORTANCE INSIGHTS ===\n")
@@ -640,43 +640,43 @@ print_parameter_importance_insights <- function(parameter_results, verbose = TRU
 # Usage examples
 # ============================================================================
 
-# Assuming you have parameter_results from run_parameter_importance():
+# Assuming you have importance_results from run_parameter_importance():
 #
 # # Create individual plots
-# emissions_plot <- create_emissions_spaghetti_plot(parameter_results$successful_runs)
-# temp_plot <- create_temperature_spaghetti_plot(parameter_results$successful_runs)
-# mitigation_plot <- create_mitigation_spaghetti_plot(parameter_results$successful_runs)
-# cdr_plot <- create_cdr_spaghetti_plot(parameter_results$successful_runs)
-# abatement_cost_plot <- create_abatement_cost_spaghetti_plot(parameter_results$successful_runs)
-# damage_cost_plot <- create_damage_cost_spaghetti_plot(parameter_results$successful_runs)
+# emissions_plot <- create_emissions_spaghetti_plot(importance_results$successful_runs)
+# temp_plot <- create_temperature_spaghetti_plot(importance_results$successful_runs)
+# mitigation_plot <- create_mitigation_spaghetti_plot(importance_results$successful_runs)
+# cdr_plot <- create_cdr_spaghetti_plot(importance_results$successful_runs)
+# abatement_cost_plot <- create_abatement_cost_spaghetti_plot(importance_results$successful_runs)
+# damage_cost_plot <- create_damage_cost_spaghetti_plot(importance_results$successful_runs)
 #
 # # View individual plot
 # print(temp_plot)
 #
 # # Create complete dashboard
-# dashboard <- create_parameter_importance_dashboard(parameter_results)
+# dashboard <- create_parameter_importance_dashboard(importance_results)
 # print(dashboard)
 #
 # # Create dashboard with insights printed
 # dashboard <- create_parameter_importance_dashboard(
-#   parameter_results = parameter_results,
+#   importance_results = importance_results,
 #   print_insights = TRUE,
 #   verbose = TRUE
 # )
 #
 # # Save dashboard to file
 # create_parameter_importance_dashboard(
-#   parameter_results = parameter_results,
+#   importance_results = importance_results,
 #   save_plot = TRUE,
 #   filename = "my_parameter_importance.pdf"
 # )
 #
 # # Print insights separately
-# print_parameter_importance_insights(parameter_results)
+# print_parameter_importance_insights(importance_results)
 #
 # # Filter results and create dashboard from filtered data
-# filtered_results <- filter_parameter_results(
-#   parameter_results = parameter_results,
+# filtered_results <- filter_importance_results(
+#   importance_results = importance_results,
 #   max_final_temperature = 1.6
 # )
 # dashboard <- create_parameter_importance_dashboard(filtered_results)

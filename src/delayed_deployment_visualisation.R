@@ -66,6 +66,18 @@ DELAYED_DEPLOYMENT_LABELS <- list(
   cost = "Cost\n($ trillion)"
 )
 
+# Single-line versions for horizontal/bottom legends
+DELAYED_DEPLOYMENT_LABELS_SINGLE_LINE <- list(
+  peak_temperature = "Peak Temperature (°C)",
+  years_above_1p5 = "Years Above 1.5°C",
+  abatement_cost = "Abatement Cost ($ trillion)",
+  temp_cost = "Temperature Damage Cost ($ trillion)",
+  total_cost = "Total Cost ($ trillion)",
+  mitig_cost = "Mitigation Cost ($ trillion)",
+  remov_cost = "Removal Cost ($ trillion)",
+  cost = "Cost ($ trillion)"
+)
+
 # Define SSP scenario order for consistent plotting
 SSP_SCENARIO_ORDER <- c("SSP1", "SSP2", "SSP3", "SSP4", "SSP5")
 
@@ -542,7 +554,7 @@ get_delayed_deployment_theme <- function(multi_row = FALSE) {
       legend.text = element_text(size = legend_text_size),
       legend.key.size = unit(legend_key_size, "cm"),
       legend.position = "none",  # Legends extracted separately
-      plot.margin = margin(margin_size, margin_size, margin_size, margin_size)
+      plot.margin = margin(1, margin_size, 1, margin_size)  # Reduce top/bottom from margin_size to 1
     )
   
   return(theme_object)
@@ -655,7 +667,7 @@ get_variable_palette <- function(variable, custom_palettes = NULL) {
 #' custom <- list(peak_temperature = "Peak\nTemperature\n(°C)")
 #' label <- get_variable_label("peak_temperature", custom)
 #' # Returns: "Peak\nTemperature\n(°C)"
-get_variable_label <- function(variable, custom_labels = NULL) {
+get_variable_label <- function(variable, custom_labels = NULL, single_line = FALSE) {
   
   # Check for custom label first
   if (!is.null(custom_labels) && variable %in% names(custom_labels)) {
@@ -669,12 +681,19 @@ get_variable_label <- function(variable, custom_labels = NULL) {
     return(label)
   }
   
-  # Use default label
-  if (variable %in% names(DELAYED_DEPLOYMENT_LABELS)) {
-    return(DELAYED_DEPLOYMENT_LABELS[[variable]])
+  # Choose appropriate label set based on single_line parameter
+  label_set <- if (single_line) {
+    DELAYED_DEPLOYMENT_LABELS_SINGLE_LINE
+  } else {
+    DELAYED_DEPLOYMENT_LABELS
   }
   
-  # If variable not found, issue warning and return variable name
+  # Use default label
+  if (variable %in% names(label_set)) {
+    return(label_set[[variable]])
+  }
+  
+  # If variable not found, issue warning and return variable name as label
   warning("No label defined for variable '", variable, "'. Using variable name as label.")
   
   # Create basic label from variable name (replace underscores with spaces, capitalize)
@@ -1943,8 +1962,30 @@ extract_delayed_deployment_legend <- function(plot_object,
   }
   
   # Create temporary plot with legend in desired position
-  plot_with_legend <- plot_object + 
-    theme(legend.position = legend_position)
+  # Add larger legend specifications
+  if (legend_position == "bottom") {
+    plot_with_legend <- plot_object +
+      theme(legend.position = legend_position) +
+      guides(fill = guide_colorbar(
+        barwidth = 25,      # Increased from default
+        barheight = 1.2,    # Increased from default
+        title.position = "top",
+        title.hjust = 0.5,
+        label.theme = element_text(size = 10),    # Larger text
+        title.theme = element_text(size = 11)     # Larger title
+      ))
+  } else {
+    plot_with_legend <- plot_object +
+      theme(legend.position = legend_position) +
+      guides(fill = guide_colorbar(
+        barwidth = 1.5,     # Increased from default
+        barheight = 15,     # Increased from default
+        title.position = "top",
+        title.hjust = 0.5,
+        label.theme = element_text(size = 10),    # Larger text
+        title.theme = element_text(size = 11)     # Larger title
+      ))
+  }
   
   # Extract legend using cowplot
   legend_grob <- cowplot::get_legend(plot_with_legend)
@@ -2116,9 +2157,13 @@ assemble_delayed_deployment_dashboard <- function(plot_grid,
     # Add legend to bottom
     combined_plot <- main_grid / legend_grob
     
-    # Set relative heights (main grid gets most space, legend gets small strip)
-    height_ratios <- c(rep(1, n_variables), 0.1)
-    combined_plot <- combined_plot + patchwork::plot_layout(heights = height_ratios)
+    # Set relative heights (main grid gets most space, legend gets larger strip)
+    height_ratios <- c(rep(1, n_variables), 0.2)  # Increased from 0.1 to 0.15
+    combined_plot <- combined_plot + patchwork::plot_layout(
+      heights = height_ratios,
+      design = NULL
+    ) + 
+      theme(plot.margin = margin(margin_size, margin_size, margin_size, margin_size))  # Reduce top/bottom from margin_size to 1)  # Remove plot margins to reduce spacing
   }
   
   if (verbose) {
@@ -2636,9 +2681,11 @@ create_delayed_deployment_dashboard <- function(deployment_results,
   }
   
   # Get label info for each variable
+  # Use single-line labels for multi-variable layouts (bottom legend)
+  use_single_line <- (length(variables) > 1)
   variable_labels <- list()
   for (var in variables) {
-    variable_labels[[var]] <- get_variable_label(var, custom_labels)
+    variable_labels[[var]] <- get_variable_label(var, custom_labels, single_line = use_single_line)
   }
   
   if (verbose) {

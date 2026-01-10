@@ -143,7 +143,7 @@ source(here::here("src", "model_parameters.R"))
 
 # USER CHOICE: Change to desired number of parameter sets to generate
 # More samples = better coverage but longer runtime
-lhs_parameter_df <- generate_lhs_samples(n_samples = 500, seed = 12345)
+lhs_parameter_df <- generate_lhs_samples(n_samples = 100, seed = 12345)
 
 # Add fixed model parameters to the LHS samples
 parameter_df <- add_fixed_parameters(lhs_parameter_df)
@@ -184,7 +184,7 @@ parameter_df <- create_params_dataframe()
 # RUNTIME: ~5-15 minutes for 5 scenarios with parallel processing
 
 # Source required functions
-source(here::here("src", "optimal_control_core_V3.R"))
+source(here::here("src", "optimal_control_core.R"))
 source(here::here("src", "scenario_comparison.R"))
 
 # USER CHOICE: Select which SSP scenarios to compare
@@ -230,7 +230,7 @@ if (!exists("scenario_comparison_results")) {
 }
 
 # Create comprehensive dashboard
-dashboard <- create_scenario_dashboard(
+dashboard <- create_scenario_comparison_dashboard(
   scenario_results = scenario_comparison_results,
   
   # USER CHOICE: Customise dashboard
@@ -262,14 +262,14 @@ print(dashboard)
 # RUNTIME: Depends on number of LHS samples (e.g., 500 samples = 1-3 hours)
 
 # Source required functions
-source(here::here("src", "optimal_control_core_V3.R"))
+source(here::here("src", "optimal_control_core.R"))
 source(here::here("src", "parameter_importance.R"))
 
 # USER CHOICE: Select scenario for parameter importance analysis
 scenario_for_importance <- "SSP2-Baseline"  # Typically use middle-of-road scenario
 
 # Run parameter importance analysis
-parameter_importance_results <- run_parameter_importance_analysis(
+parameter_importance_results <- run_parameter_importance(
   parameter_df = parameter_df,           # Must have multiple rows from LHS
   emissions_df = emissions_df,
   economic_df = economic_df,
@@ -303,14 +303,7 @@ if (!exists("parameter_importance_results")) {
 # Create parameter importance dashboard
 importance_dashboard <- create_parameter_importance_dashboard(
   importance_results = parameter_importance_results,
-  
-  # USER CHOICE: Variables to analyse
-  outcome_variables = c("peak_temperature", "total_cost", "years_above_1p5"),
-  
-  # USER CHOICE: Styling
-  save_plot = TRUE,
-  width = 297,
-  height = 210,
+  save_plot = TRUE, 
   verbose = TRUE
 )
 
@@ -330,12 +323,12 @@ print(importance_dashboard)
 #          Example: 50-year max, 10-year steps, 5 scenarios = ~30 minutes
 
 # Source required functions
-source(here::here("src", "optimal_control_core_V3.R"))
+source(here::here("src", "optimal_control_core.R"))
 source(here::here("src", "delayed_deployment.R"))
 
 # USER CHOICE: Delay range and granularity
-max_delay_years <- 50        # Maximum delay to test (years)
-delay_step_size <- 10        # Step size (1 = yearly, 10 = every decade)
+max_delay_years <- 70        # Maximum delay to test (years)
+delay_step_size <- 1        # Step size (1 = yearly, 10 = every decade)
 
 # USER CHOICE: Scenarios to analyse
 # Options: "all" or vector like c("SSP2-Baseline", "SSP3-Baseline")
@@ -375,14 +368,19 @@ if (!exists("delayed_deployment_results")) {
   stop("Delayed deployment results not found. Please run the delayed_deployment_analysis chunk first.")
 }
 
+# Create abatement cost field (mitig cost + remov_cost)
+# Calculate abatement cost
+delayed_deployment_results$combined_results <- delayed_deployment_results$combined_results %>%
+  mutate(abatement_cost = mitig_cost + remov_cost)
+
 # Create main dashboard
 dashboard <- create_delayed_deployment_dashboard(
   deployment_results = delayed_deployment_results,
   
   # USER CHOICE: Variables to plot
   # Options: "peak_temperature", "years_above_1p5", "abatement_cost", 
-  #          "temp_damage_cost", "total_cost", "mitig_cost", "remov_cost"
-  variables = c("peak_temperature"),
+  #          "temp_cost", "total_cost", "mitig_cost", "remov_cost"
+  variables = c("abatement_cost", "temp_cost"),
   
   # USER CHOICE: Visual features
   add_contours = TRUE,
