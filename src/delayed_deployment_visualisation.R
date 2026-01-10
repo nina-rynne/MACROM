@@ -2154,16 +2154,20 @@ assemble_delayed_deployment_dashboard <- function(plot_grid,
       main_grid <- row_plots[[1]] / row_plots[[2]] / row_plots[[3]] / row_plots[[4]] / row_plots[[5]]
     }
     
+    # Apply tight spacing to main grid
+    main_grid <- main_grid + plot_layout() & 
+      theme(plot.margin = unit(c(1, 2, 1, 2), "mm"))  # Minimal top/bottom, normal left/right
+    
     # Add legend to bottom
     combined_plot <- main_grid / legend_grob
     
     # Set relative heights (main grid gets most space, legend gets larger strip)
-    height_ratios <- c(rep(1, n_variables), 0.2)  # Increased from 0.1 to 0.15
+    height_ratios <- c(rep(1, n_variables), 0.2)
     combined_plot <- combined_plot + patchwork::plot_layout(
       heights = height_ratios,
       design = NULL
-    ) + 
-      theme(plot.margin = margin(margin_size, margin_size, margin_size, margin_size))  # Reduce top/bottom from margin_size to 1)  # Remove plot margins to reduce spacing
+    ) +
+      theme(plot.margin = margin(0, 0, 0, 0))  # Remove plot margins to reduce spacing
   }
   
   if (verbose) {
