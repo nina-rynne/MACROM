@@ -47,7 +47,7 @@ DELAYED_DEPLOYMENT_PALETTES <- list(
   peak_temperature = list(option = "plasma", direction = -1),
   years_above_1p5 = list(option = "plasma", direction = -1),
   abatement_cost = list(option = "viridis", direction = -1),
-  temp_damage_cost = list(option = "viridis", direction = -1),
+  temp_cost = list(option = "viridis", direction = -1),
   total_cost = list(option = "viridis", direction = -1),
   mitig_cost = list(option = "viridis", direction = -1),
   remov_cost = list(option = "viridis", direction = -1)
@@ -59,7 +59,7 @@ DELAYED_DEPLOYMENT_LABELS <- list(
   peak_temperature = "Peak\nTemp.\n(°C)",
   years_above_1p5 = "Years\nAbove\n1.5°C",
   abatement_cost = "Abatement\nCost\n($ trillion)",
-  temp_damage_cost = "Temp.\nDamage\nCost\n($ trillion)",
+  temp_cost = "Temp.\nDamage\nCost\n($ trillion)",
   total_cost = "Total\nCost\n($ trillion)",
   mitig_cost = "Mitigation\nCost\n($ trillion)",
   remov_cost = "Removal\nCost\n($ trillion)",
@@ -71,10 +71,13 @@ SSP_SCENARIO_ORDER <- c("SSP1", "SSP2", "SSP3", "SSP4", "SSP5")
 
 # Define base theme for delayed deployment heatmaps
 # This will be adjusted based on layout type (single-row vs multi-row)
+# Define base theme for delayed deployment heatmaps
+# This will be adjusted based on layout type (single-row vs multi-row)
 BASE_DELAYED_DEPLOYMENT_THEME <- theme_bw() +
   theme(
     panel.grid.major = element_blank(),
-    panel.grid.minor = element_blank()
+    panel.grid.minor = element_blank(),
+    panel.background = element_rect(fill = "white", colour = NA)
   )
 
 # ==============================================================================
@@ -231,7 +234,7 @@ prepare_delayed_deployment_data <- function(deployment_results,
 #'   Must have columns: scenario_short, mitigation_delay, cdr_delay, and the
 #'   variable specified in 'variable' parameter
 #' @param variable Character string naming the variable for gradient calculation
-#'   (e.g., "abatement_cost", "temp_damage_cost")
+#'   (e.g., "abatement_cost", "temp_cost")
 #' @param verbose Logical indicating whether to print progress messages (default: TRUE)
 #' 
 #' @return Data frame with three additional columns:
@@ -256,7 +259,7 @@ prepare_delayed_deployment_data <- function(deployment_results,
 #' # Calculate gradients for temperature damage cost
 #' data_with_gradients <- calculate_delayed_deployment_gradients(
 #'   plot_data, 
-#'   variable = "temp_damage_cost",
+#'   variable = "temp_cost",
 #'   verbose = FALSE
 #' )
 calculate_delayed_deployment_gradients <- function(data,
@@ -373,7 +376,7 @@ calculate_delayed_deployment_gradients <- function(data,
 #' # Shared scale for cost comparison
 #' limits <- calculate_variable_limits(
 #'   plot_data,
-#'   variables = c("total_cost", "abatement_cost", "temp_damage_cost"),
+#'   variables = c("total_cost", "abatement_cost", "temp_cost"),
 #'   shared_scale = TRUE
 #' )
 #' # Returns: list(shared = c(min, max))
@@ -754,7 +757,7 @@ calculate_contour_breaks <- function(data,
     return(breaks)
   }
   
-  # Calculate automatic breaks
+  # Get variable values
   var_values <- data[[variable]][!is.na(data[[variable]])]
   
   if (length(var_values) == 0) {
@@ -762,6 +765,44 @@ calculate_contour_breaks <- function(data,
   }
   
   var_range <- range(var_values)
+  
+  # Strategy 1: For peak_temperature, return NULL to let geom_contour() auto-calculate
+  if (variable == "peak_temperature") {
+    if (verbose) {
+      cat(sprintf("Using automatic breaks for %s (range: %.4f to %.4f)\n",
+                  variable, var_range[1], var_range[2]))
+    }
+    return(NULL)
+  }
+  
+  # Strategy 2: For years_above_1p5, use interval of 5 years
+  if (variable == "years_above_1p5") {
+    interval <- 5
+    break_min <- ceiling(var_range[1] / interval) * interval
+    break_max <- floor(var_range[2] / interval) * interval
+    
+    # Generate breaks
+    if (break_min > break_max) {
+      contour_breaks <- c(var_range[1], var_range[2])
+    } else {
+      contour_breaks <- seq(break_min, break_max, by = interval)
+      
+      # Ensure we have at least 2 breaks
+      if (length(contour_breaks) < 2) {
+        contour_breaks <- c(var_range[1], var_range[2])
+      }
+    }
+    
+    if (verbose) {
+      cat(sprintf("Using 5-year interval breaks for %s (range: %.4f to %.4f): %s\n",
+                  variable, var_range[1], var_range[2],
+                  paste(contour_breaks, collapse = ", ")))
+    }
+    
+    return(contour_breaks)
+  }
+  
+  # Strategy 3: For cost variables, use adaptive interval logic
   range_size <- var_range[2] - var_range[1]
   
   # Determine appropriate interval based on range size
@@ -817,8 +858,8 @@ calculate_contour_breaks <- function(data,
   }
   
   if (verbose) {
-    cat(sprintf("Final breaks for %s (range: %.4f to %.4f): %s\n",
-                variable, var_range[1], var_range[2], 
+    cat(sprintf("Final breaks for %s (range: %.4f to %.4f, interval: %d): %s\n",
+                variable, var_range[1], var_range[2], interval,
                 paste(sprintf("%.4f", contour_breaks), collapse = ", ")))
   }
   
@@ -922,7 +963,7 @@ create_delayed_deployment_base_heatmap <- function(scenario_data,
   
   # Create base plot
   p <- ggplot(scenario_data, aes(x = mitigation_delay, y = cdr_delay, fill = .data[[variable]])) +
-    geom_tile() +
+    geom_tile(color = NA) +  # Add color = NA to remove tile borders
     scale_fill_viridis_c(
       name = variable_label,
       option = palette_info$option,
@@ -1010,24 +1051,40 @@ add_delayed_deployment_contours <- function(plot_object,
     stop("Variable '", variable, "' not found in scenario_data")
   }
   
-  if (!is.numeric(contour_breaks) || length(contour_breaks) < 2) {
-    stop("contour_breaks must be a numeric vector with at least 2 values")
-  }
-  
   if (contour_alpha < 0 || contour_alpha > 1) {
     stop("contour_alpha must be between 0 and 1")
   }
   
-  # Add contour layer
-  plot_with_contours <- plot_object +
-    geom_contour(
-      data = scenario_data,
-      aes(x = mitigation_delay, y = cdr_delay, z = .data[[variable]]),
-      breaks = contour_breaks,
-      color = contour_color,
-      alpha = contour_alpha,
-      linewidth = contour_linewidth
-    )
+  # Handle NULL contour_breaks (automatic calculation by geom_contour)
+  if (is.null(contour_breaks)) {
+    # Add contour layer WITHOUT breaks parameter - let geom_contour() auto-calculate
+    plot_with_contours <- plot_object +
+      geom_contour(
+        data = scenario_data,
+        aes(x = mitigation_delay, y = cdr_delay, z = .data[[variable]]),
+        color = contour_color,
+        alpha = contour_alpha,
+        linewidth = contour_linewidth,
+        inherit.aes = FALSE
+      )
+  } else {
+    # Validate explicit breaks
+    if (!is.numeric(contour_breaks) || length(contour_breaks) < 2) {
+      stop("contour_breaks must be NULL or a numeric vector with at least 2 values")
+    }
+    
+    # Add contour layer WITH explicit breaks parameter
+    plot_with_contours <- plot_object +
+      geom_contour(
+        data = scenario_data,
+        aes(x = mitigation_delay, y = cdr_delay, z = .data[[variable]]),
+        breaks = contour_breaks,
+        color = contour_color,
+        alpha = contour_alpha,
+        linewidth = contour_linewidth,
+        inherit.aes = FALSE
+      )
+  }
   
   return(plot_with_contours)
 }
@@ -1158,7 +1215,8 @@ add_delayed_deployment_arrows <- function(plot_object,
       arrow.length = arrow_length,
       arrow.type = "closed",    # Filled arrowhead
       linewidth = arrow_size,
-      alpha = arrow_alpha
+      alpha = arrow_alpha,
+      inherit.aes = FALSE
     ) +
     scale_colour_viridis_c(
       name = "Gradient\nMagnitude",
@@ -1482,8 +1540,22 @@ create_single_delayed_deployment_plot <- function(scenario_data,
       contour_breaks_calc <- contour_breaks
     }
     
-    # Only add contours if we have valid breaks
-    if (length(contour_breaks_calc) >= 2) {
+    # Add contours - handle both NULL (automatic) and explicit breaks
+    if (is.null(contour_breaks_calc)) {
+      # NULL means automatic calculation by geom_contour()
+      p <- add_delayed_deployment_contours(
+        plot_object = p,
+        scenario_data = scenario_data,
+        variable = variable,
+        contour_breaks = NULL,
+        contour_alpha = contour_alpha
+      )
+      
+      if (verbose) {
+        cat("  - Contours added (automatic breaks)\n")
+      }
+    } else if (length(contour_breaks_calc) >= 2) {
+      # Explicit breaks provided
       p <- add_delayed_deployment_contours(
         plot_object = p,
         scenario_data = scenario_data,
@@ -1502,48 +1574,74 @@ create_single_delayed_deployment_plot <- function(scenario_data,
     }
   }
   
-  # Step 3: Add arrows if requested
+  # Step 3: Add gradient arrows if requested
   if (add_arrows) {
-    # Check if gradient data exists
-    if (!all(c("dx", "dy", "gradient_mag") %in% names(scenario_data))) {
-      warning("Arrow visualization requested but gradient data not found for scenario: ", 
-              scenario_name, ". Skipping arrows.")
-    } else {
-      p <- add_delayed_deployment_arrows(
-        plot_object = p,
-        scenario_data = scenario_data,
-        arrow_scale = arrow_scale,
-        arrow_skip = arrow_skip,
-        min_magnitude = min_magnitude,
-        arrow_size = arrow_size,
-        arrow_alpha = arrow_alpha,
-        mag_limits = mag_limits,
-        show_mag_legend = FALSE  # Magnitude legend extracted separately
-      )
+    # Check that gradient columns exist
+    required_gradient_cols <- c("dx", "dy", "gradient_mag")
+    missing_gradient_cols <- setdiff(required_gradient_cols, names(scenario_data))
+    
+    if (length(missing_gradient_cols) > 0) {
+      warning(sprintf("Cannot add arrows for %s: missing gradient columns: %s", 
+                      scenario_name, paste(missing_gradient_cols, collapse = ", ")))
       
       if (verbose) {
-        cat("  - Arrows added\n")
+        cat("  - Skipping arrows (missing gradient data)\n")
+      }
+    } else {
+      # Filter to rows with valid gradient data
+      arrow_data <- scenario_data %>%
+        filter(!is.na(dx), !is.na(dy), !is.na(gradient_mag))
+      
+      if (nrow(arrow_data) > 0) {
+        # Calculate magnitude limits if not provided
+        if (is.null(mag_limits)) {
+          mag_limits <- range(arrow_data$gradient_mag, na.rm = TRUE)
+        }
+        
+        p <- add_delayed_deployment_arrows(
+          plot_object = p,
+          scenario_data = arrow_data,
+          arrow_scale = arrow_scale,
+          arrow_skip = arrow_skip,
+          min_magnitude = min_magnitude,
+          arrow_size = arrow_size,
+          arrow_alpha = arrow_alpha,
+          mag_limits = mag_limits,
+          show_mag_legend = FALSE
+        )
+        
+        if (verbose) {
+          cat("  - Arrows added\n")
+        }
+      } else {
+        if (verbose) {
+          cat("  - Skipping arrows (no valid gradient data)\n")
+        }
       }
     }
   }
   
   # Step 4: Add infeasible markers if requested
   if (show_infeasible) {
-    p <- add_delayed_deployment_infeasible_markers(
-      plot_object = p,
-      scenario_data = scenario_data
-    )
+    infeasible_data <- scenario_data %>% filter(!feasible)
     
-    if (verbose) {
-      n_infeasible <- sum(!scenario_data$feasible, na.rm = TRUE)
-      if (n_infeasible > 0) {
-        cat(sprintf("  - Infeasible markers added (%d combinations)\n", n_infeasible))
+    if (nrow(infeasible_data) > 0) {
+      p <- p + 
+        geom_point(
+          data = infeasible_data, 
+          aes(x = mitigation_delay, y = cdr_delay), 
+          shape = 4, 
+          size = 1, 
+          color = "red", 
+          alpha = 0.8, 
+          stroke = 0.8, 
+          inherit.aes = FALSE
+        )
+      
+      if (verbose) {
+        cat(sprintf("  - Infeasible markers added (%d points)\n", nrow(infeasible_data)))
       }
     }
-  }
-  
-  if (verbose) {
-    cat(sprintf("Plot complete for %s\n", scenario_name))
   }
   
   return(p)
@@ -1635,7 +1733,7 @@ create_single_delayed_deployment_plot <- function(scenario_data,
 #' # Create grid for multiple variables
 #' plot_grid <- create_delayed_deployment_plot_grid(
 #'   data = prepared_data,
-#'   variables = c("total_cost", "abatement_cost", "temp_damage_cost"),
+#'   variables = c("total_cost", "abatement_cost", "temp_cost"),
 #'   variable_limits = list(shared = c(0, 5000)),
 #'   palette_info = palette_list,
 #'   variable_labels = label_list,
@@ -1900,7 +1998,7 @@ extract_delayed_deployment_legend <- function(plot_object,
 #' dashboard <- assemble_delayed_deployment_dashboard(
 #'   plot_grid = plot_grid,
 #'   legend_grob = legend,
-#'   variables = c("total_cost", "abatement_cost", "temp_damage_cost"),
+#'   variables = c("total_cost", "abatement_cost", "temp_cost"),
 #'   scenarios = c("SSP1", "SSP2", "SSP3", "SSP4", "SSP5"),
 #'   legend_position = "bottom"
 #' )
@@ -1909,12 +2007,7 @@ assemble_delayed_deployment_dashboard <- function(plot_grid,
                                                   variables,
                                                   scenarios,
                                                   legend_position = "right",
-                                                  verbose = TRUE) {
-  
-  # Validate inputs
-  if (!is.list(plot_grid) || length(plot_grid) == 0) {
-    stop("plot_grid must be a non-empty list")
-  }
+                                                  verbose = FALSE) {
   
   # Check patchwork is available
   if (!requireNamespace("patchwork", quietly = TRUE)) {
@@ -1979,7 +2072,7 @@ assemble_delayed_deployment_dashboard <- function(plot_grid,
       cat(sprintf("Layout: %d×5 grid (multi-variable) with legend on bottom\n", n_variables))
     }
     
-    # Build rows
+    # Build rows - each row contains all scenarios for one variable
     row_plots <- list()
     
     for (var_idx in seq_along(variables)) {
@@ -1990,13 +2083,35 @@ assemble_delayed_deployment_dashboard <- function(plot_grid,
         plot_grid[[variable]][[scen]]
       })
       
-      # Combine horizontally
-      row_combined <- Reduce(`+`, scenario_plots)
+      # Combine horizontally using explicit pipe operator
+      # For 5 scenarios: p1 | p2 | p3 | p4 | p5
+      if (length(scenario_plots) == 1) {
+        row_combined <- scenario_plots[[1]]
+      } else if (length(scenario_plots) == 2) {
+        row_combined <- scenario_plots[[1]] | scenario_plots[[2]]
+      } else if (length(scenario_plots) == 3) {
+        row_combined <- scenario_plots[[1]] | scenario_plots[[2]] | scenario_plots[[3]]
+      } else if (length(scenario_plots) == 4) {
+        row_combined <- scenario_plots[[1]] | scenario_plots[[2]] | scenario_plots[[3]] | scenario_plots[[4]]
+      } else if (length(scenario_plots) == 5) {
+        row_combined <- scenario_plots[[1]] | scenario_plots[[2]] | scenario_plots[[3]] | scenario_plots[[4]] | scenario_plots[[5]]
+      }
+      
       row_plots[[var_idx]] <- row_combined
     }
     
-    # Combine all rows vertically
-    main_grid <- Reduce(`/`, row_plots)
+    # Combine all rows vertically using /
+    if (length(row_plots) == 1) {
+      main_grid <- row_plots[[1]]
+    } else if (length(row_plots) == 2) {
+      main_grid <- row_plots[[1]] / row_plots[[2]]
+    } else if (length(row_plots) == 3) {
+      main_grid <- row_plots[[1]] / row_plots[[2]] / row_plots[[3]]
+    } else if (length(row_plots) == 4) {
+      main_grid <- row_plots[[1]] / row_plots[[2]] / row_plots[[3]] / row_plots[[4]]
+    } else if (length(row_plots) == 5) {
+      main_grid <- row_plots[[1]] / row_plots[[2]] / row_plots[[3]] / row_plots[[4]] / row_plots[[5]]
+    }
     
     # Add legend to bottom
     combined_plot <- main_grid / legend_grob
@@ -2239,7 +2354,8 @@ save_delayed_deployment_dashboard <- function(plot_object,
     width = width,
     height = height,
     units = "mm",
-    device = cairo_pdf
+    device = cairo_pdf,
+    dpi = 300
   )
   
   if (verbose) {
@@ -2284,7 +2400,7 @@ save_delayed_deployment_dashboard <- function(plot_object,
 #'   - "peak_temperature": Peak temperature anomaly (°C)
 #'   - "years_above_1p5": Years above 1.5°C threshold
 #'   - "abatement_cost": Total abatement costs (mitigation + CDR)
-#'   - "temp_damage_cost": Temperature-related damage costs
+#'   - "temp_cost": Temperature-related damage costs
 #'   - "total_cost": Sum of abatement and damage costs
 #' @param color_palettes Optional named list of palette specifications for each variable.
 #'   Each element should be a list with 'option' and 'direction'. If NULL, uses defaults.
@@ -2368,7 +2484,7 @@ save_delayed_deployment_dashboard <- function(plot_object,
 #' # Multi-variable comparison with shared scale
 #' dashboard <- create_delayed_deployment_dashboard(
 #'   deployment_results = results,
-#'   variables = c("total_cost", "abatement_cost", "temp_damage_cost"),
+#'   variables = c("total_cost", "abatement_cost", "temp_cost"),
 #'   shared_scale = TRUE,
 #'   title = "Comprehensive Cost Comparison",
 #'   subtitle = "Shared scale enables direct comparison",
@@ -2776,7 +2892,7 @@ create_temperature_delay_dashboard <- function(deployment_results,
 #' 
 #' @param deployment_results Results object from delayed deployment analysis
 #' @param cost_variable Character string naming the cost variable to plot.
-#'   Options: "abatement_cost", "temp_damage_cost", "total_cost", "mitig_cost", "remov_cost"
+#'   Options: "abatement_cost", "temp_cost", "total_cost", "mitig_cost", "remov_cost"
 #'   Default is "abatement_cost"
 #' @param arrow_scale Numeric scaling factor for arrow length (default: 3.0)
 #' @param min_magnitude Minimum gradient magnitude for arrow display (default: 0)
@@ -2805,7 +2921,7 @@ create_temperature_delay_dashboard <- function(deployment_results,
 #' # Temperature damage cost analysis
 #' dashboard <- create_cost_delay_dashboard(
 #'   multi_results,
-#'   cost_variable = "temp_damage_cost"
+#'   cost_variable = "temp_cost"
 #' )
 #' 
 #' # Customize arrow appearance
@@ -2826,7 +2942,7 @@ create_cost_delay_dashboard <- function(deployment_results,
                                         ...) {
   
   # Validate cost variable
-  valid_cost_vars <- c("abatement_cost", "temp_damage_cost", "total_cost", 
+  valid_cost_vars <- c("abatement_cost", "temp_cost", "total_cost", 
                        "mitig_cost", "remov_cost")
   
   if (!cost_variable %in% valid_cost_vars) {
@@ -2878,7 +2994,7 @@ create_cost_delay_dashboard <- function(deployment_results,
 #' 
 #' @details
 #' Pre-configured settings:
-#' - Variables: "total_cost", "abatement_cost", "temp_damage_cost"
+#' - Variables: "total_cost", "abatement_cost", "temp_cost"
 #' - Color palette: viridis (reversed) for all
 #' - Shared scale: TRUE by default (can be overridden)
 #' - Contours: enabled with automatic breaks
@@ -2927,7 +3043,7 @@ create_comprehensive_cost_delay_dashboard <- function(deployment_results,
   # Pre-configure for comprehensive cost comparison
   create_delayed_deployment_dashboard(
     deployment_results = deployment_results,
-    variables = c("total_cost", "abatement_cost", "temp_damage_cost"),
+    variables = c("total_cost", "abatement_cost", "temp_cost"),
     shared_scale = shared_scale,
     add_contours = TRUE,
     add_arrows = FALSE,  # Can be overridden via ...
@@ -3014,7 +3130,7 @@ create_comprehensive_cost_delay_dashboard <- function(deployment_results,
 # -----------------------------------------------------------------------------
 # dashboard <- create_delayed_deployment_dashboard(
 #   deployment_results = multi_results,
-#   variables = c("temp_damage_cost"),
+#   variables = c("temp_cost"),
 #   add_contours = TRUE,
 #   add_arrows = TRUE,
 #   arrow_scale = 3.0,
@@ -3031,7 +3147,7 @@ create_comprehensive_cost_delay_dashboard <- function(deployment_results,
 # -----------------------------------------------------------------------------
 # dashboard <- create_delayed_deployment_dashboard(
 #   deployment_results = multi_results,
-#   variables = c("peak_temperature", "abatement_cost", "temp_damage_cost"),
+#   variables = c("peak_temperature", "abatement_cost", "temp_cost"),
 #   shared_scale = FALSE,  # Each variable gets its own scale
 #   add_contours = TRUE,
 #   height = 260,  # Taller for 3 rows
