@@ -253,62 +253,91 @@ print(dashboard)
 
 ```{r parameter_importance_analysis, eval=FALSE}
 # ==============================================================================
-# Parameter Importance Analysis
+# Solution generation for multiple parameters & single SSP
 # ==============================================================================
-# Analyse which parameters have the greatest influence on model outcomes
-# 
-# REQUIREMENTS: Must use LHS parameter sampling (run latin_hypercube_sampling_call)
-# OUTPUTS: Saved automatically to output/ directory
-# RUNTIME: Depends on number of LHS samples (e.g., 500 samples = 1-3 hours)
+# Parameter importance analysis using Latin Hypercube Sampling (LHS) parameter sets
+# This explores the solution space across multiple parameter combinations
+# Provides output for sensitivity analysis
 
 # Source required functions
 source(here::here("src", "optimal_control_core.R"))
 source(here::here("src", "parameter_importance.R"))
 
-# USER CHOICE: Select scenario for parameter importance analysis
-scenario_for_importance <- "SSP2-Baseline"  # Typically use middle-of-road scenario
+# USER CHOICE: Modify these settings as needed
+scenario_to_analyse <- "SSP4-Baseline"
 
-# Run parameter importance analysis
+# Run parameter importance analysis (saves automatically)
 parameter_importance_results <- run_parameter_importance(
-  parameter_df = parameter_df,           # Must have multiple rows from LHS
+  parameter_df = parameter_df,
   emissions_df = emissions_df,
   economic_df = economic_df,
-  scenario = scenario_for_importance,
+  scenario = scenario_to_analyse,
+  mitigation_delay_years = 0,
+  cdr_delay_years = 0,
   use_parallel = TRUE,
   save_results = TRUE,
   verbose = FALSE
 )
 
-# Display summary
-if (!is.null(parameter_importance_results$importance_summary)) {
-  print(parameter_importance_results$importance_summary)
-}
+# Filter parameter importance results to remove problematic runs
+# This removes runs that fail to return temperature to 1.5°C by 2100
+
+# USER CHOICE: Set maximum acceptable final temperature (default: 1.6°C)
+max_acceptable_temperature <- 1.6
+
+# Apply filtering
+parameter_importance_results_cleaned <- filter_importance_results(
+  importance_results = parameter_importance_results,
+  max_final_temperature = max_acceptable_temperature,
+  verbose = TRUE
+)
 ```
 
 ```{r parameter_importance_visualisation, eval=FALSE}
 # ==============================================================================
-# Parameter Importance Visualisation
+# Plot multiple parameters & single SSP results
 # ==============================================================================
-# Create visualisations showing parameter sensitivities and correlations
-# OUTPUTS: Saved automatically to figs/ directory
+# Create visualisations for parameter importance analysis results
 
-# Source visualisation functions
+# Source parameter importance visualisation functions
 source(here::here("src", "parameter_importance_visualisation.R"))
 
 # Check if results exist
-if (!exists("parameter_importance_results")) {
-  stop("Parameter importance results not found. Please run the parameter_importance_analysis chunk first.")
+if (!exists("parameter_importance_results_cleaned")) {
+  stop("Parameter importance results not found. Please run the parameter_importance_analysis and parameter_importance_filtering chunks first.")
 }
 
-# Create parameter importance dashboard
-importance_dashboard <- create_parameter_importance_dashboard(
-  importance_results = parameter_importance_results,
-  save_plot = TRUE, 
-  verbose = TRUE
+# Create and display dashboard with insights
+parameter_importance_dashboard <- create_parameter_importance_dashboard(
+  importance_results = parameter_importance_results_cleaned,
+  save_plot = TRUE,
+  print_insights = FALSE,
+  verbose = FALSE
 )
 
-# Display the dashboard
-print(importance_dashboard)
+print(parameter_importance_dashboard)
+```
+
+```{r export_parameter_importance_for_sobol, eval=FALSE}
+# ==============================================================================
+# Export multiple SSPs & single parameter set results
+# ==============================================================================
+# Export parameter importance results for external Sobol indices analysis
+# Creates CSV files with parameter values and output variables
+
+# Source required functions
+source(here::here("src", "parameter_importance.R"))
+
+# Check if cleaned results exist
+if (!exists("parameter_importance_results_cleaned")) {
+  stop("Cleaned parameter importance results not found. Please run parameter_importance_filtering chunk first.")
+}
+
+# Export results for Sobol analysis (saves automatically)
+export_for_sobol_analysis(
+  importance_results = parameter_importance_results_cleaned,
+  verbose = FALSE
+)
 ```
 
 ```{r delayed_deployment_analysis, eval=FALSE}
@@ -327,8 +356,8 @@ source(here::here("src", "optimal_control_core.R"))
 source(here::here("src", "delayed_deployment.R"))
 
 # USER CHOICE: Delay range and granularity
-max_delay_years <- 70        # Maximum delay to test (years)
-delay_step_size <- 1        # Step size (1 = yearly, 10 = every decade)
+max_delay_years <- 50        # Maximum delay to test (years)
+delay_step_size <- 10        # Step size (1 = yearly, 10 = every decade)
 
 # USER CHOICE: Scenarios to analyse
 # Options: "all" or vector like c("SSP2-Baseline", "SSP3-Baseline")

@@ -400,7 +400,7 @@ run_parameter_importance <- function(parameter_df,
   # Save results if requested
   if (save_results) {
     save_parameter_importance_results(
-      parameter_results = list(
+      importance_results = list(
         successful_runs = successful_runs,
         failed_runs = failed_runs,
         summary = summary_df,
@@ -451,14 +451,14 @@ run_parameter_importance <- function(parameter_df,
 #' @description
 #' Saves parameter importance results to RDS and optionally CSV, with summary reporting
 #'
-#' @param parameter_results Output from run_parameter_importance()
+#' @param importance_results Output from run_parameter_importance()
 #' @param output_dir Directory to save results (default: "output")
 #' @param output_prefix Prefix for output filenames (default: "parameter_importance")
 #' @param save_csv Whether to also save summary as CSV (default: TRUE)
 #' @param verbose Print summary information (default: TRUE)
 #'
 #' @return Invisibly returns a list with filepaths of saved files
-save_parameter_importance_results <- function(parameter_results,
+save_parameter_importance_results <- function(importance_results,
                                               output_dir = "output",
                                               output_prefix = "parameter_importance",
                                               save_csv = TRUE,
@@ -470,9 +470,9 @@ save_parameter_importance_results <- function(parameter_results,
   
   # Extract scenario name for filename
   scenario_name <- "unknown_scenario"
-  if ("run_info" %in% names(parameter_results) && 
-      "scenario" %in% names(parameter_results$run_info)) {
-    scenario_name <- parameter_results$run_info$scenario
+  if ("run_info" %in% names(importance_results) && 
+      "scenario" %in% names(importance_results$run_info)) {
+    scenario_name <- importance_results$run_info$scenario
     # Clean scenario name for filename (remove spaces, special characters)
     scenario_name <- gsub("[^A-Za-z0-9-]", "_", scenario_name)
   }
@@ -483,7 +483,7 @@ save_parameter_importance_results <- function(parameter_results,
   # Save main results as RDS file with scenario name
   rds_filename <- paste0(output_prefix, "_", scenario_name, "_", timestamp, ".rds")
   rds_filepath <- here::here(output_dir, rds_filename)
-  saveRDS(parameter_results, rds_filepath)
+  saveRDS(importance_results, rds_filepath)
   
   if (verbose) {
     cat("\n=== RESULTS SAVED ===\n")
@@ -492,10 +492,10 @@ save_parameter_importance_results <- function(parameter_results,
   
   # Save summary as CSV if requested and available
   csv_filepath <- NULL
-  if (save_csv && !is.null(parameter_results$summary)) {
+  if (save_csv && !is.null(importance_results$summary)) {
     csv_filename <- paste0(output_prefix, "_summary_", scenario_name, "_", timestamp, ".csv")
     csv_filepath <- here::here(output_dir, csv_filename)
-    write.csv(parameter_results$summary, csv_filepath, row.names = FALSE)
+    write.csv(importance_results$summary, csv_filepath, row.names = FALSE)
     
     if (verbose) {
       cat("CSV summary:", csv_filepath, "\n")
@@ -507,10 +507,10 @@ save_parameter_importance_results <- function(parameter_results,
   # ============================================================================
   
   # Print extended summary statistics if verbose mode enabled
-  if (verbose && !is.null(parameter_results$summary)) {
+  if (verbose && !is.null(importance_results$summary)) {
     cat("\n=== EXTENDED SUMMARY ===\n")
     
-    summary_df <- parameter_results$summary
+    summary_df <- importance_results$summary
     
     # Report temperature range across parameter sets
     cat("Peak temperature range:", 
@@ -567,31 +567,31 @@ save_parameter_importance_results <- function(parameter_results,
 #' Filters parameter importance results based on criteria, removing runs that don't
 #' meet specified conditions (e.g., fail to return temperature to target)
 #'
-#' @param parameter_results Output from run_parameter_importance()
+#' @param importance_results Output from run_parameter_importance()
 #' @param max_final_temperature Maximum acceptable final temperature (default: NULL, no filtering)
 #' @param verbose Print information about filtered runs (default: TRUE)
 #'
-#' @return Filtered parameter_results list with same structure as input
+#' @return Filtered importance_results list with same structure as input
 #'
 #' @examples
 #' # Filter out runs that don't return to 1.5°C
-#' cleaned_results <- filter_parameter_results(
-#'   parameter_results = results,
+#' cleaned_results <- filter_importance_results(
+#'   importance_results = results,
 #'   max_final_temperature = 1.6
 #' )
-filter_parameter_results <- function(parameter_results,
+filter_importance_results <- function(importance_results,
                                      max_final_temperature = NULL,
                                      verbose = TRUE) {
   
   # Create a copy of the results
-  filtered_results <- parameter_results
+  filtered_results <- importance_results
   
   # Identify runs to remove based on final temperature
   runs_to_remove <- character(0)
   
-  if (!is.null(max_final_temperature) && !is.null(parameter_results$summary)) {
-    temp_filter <- parameter_results$summary$final_temperature > max_final_temperature
-    runs_to_remove <- parameter_results$summary$run_id[temp_filter]
+  if (!is.null(max_final_temperature) && !is.null(importance_results$summary)) {
+    temp_filter <- importance_results$summary$final_temperature > max_final_temperature
+    runs_to_remove <- importance_results$summary$run_id[temp_filter]
     
     if (length(runs_to_remove) > 0 && verbose) {
       cat("Identified", length(runs_to_remove), 
@@ -626,7 +626,7 @@ filter_parameter_results <- function(parameter_results,
   }
   
   return(filtered_results)
-} # Close the filter_parameter_results function
+} # Close the filter_importance_results function
 
 
 
@@ -637,7 +637,7 @@ filter_parameter_results <- function(parameter_results,
 #' files for each output variable (e.g., total cost, peak temperature) with
 #' parameter values as columns and output variable as Y column.
 #'
-#' @param parameter_results Output from run_parameter_importance() or filtered results
+#' @param importance_results Output from run_parameter_importance() or filtered results
 #' @param output_dir Directory to save CSV files (default: "output")
 #' @param output_variables Named list of functions to extract output variables.
 #'   Default includes: totalcost, totalmitigation, totalcdr, totalabatement,
@@ -651,15 +651,15 @@ filter_parameter_results <- function(parameter_results,
 #'
 #' @examples
 #' # Export with default settings
-#' export_for_sobol_analysis(parameter_results)
+#' export_for_sobol_analysis(importance_results)
 #' 
 #' # Export custom output variables
 #' custom_outputs <- list(
 #'   finaltemp = function(x) x$final_temperature,
 #'   maxcdr = function(x) max(x$qty_remov)
 #' )
-#' export_for_sobol_analysis(parameter_results, output_variables = custom_outputs)
-export_for_sobol_analysis <- function(parameter_results,
+#' export_for_sobol_analysis(importance_results, output_variables = custom_outputs)
+export_for_sobol_analysis <- function(importance_results,
                                       output_dir = "output",
                                       output_variables = NULL,
                                       parameter_columns = c("tcre", "costmitiglow", "costremovlow",
@@ -672,22 +672,22 @@ export_for_sobol_analysis <- function(parameter_results,
   # ============================================================================
   
   # Extract successful_runs component
-  if ("successful_runs" %in% names(parameter_results)) {
-    successful_runs <- parameter_results$successful_runs
+  if ("successful_runs" %in% names(importance_results)) {
+    successful_runs <- importance_results$successful_runs
   } else {
-    successful_runs <- parameter_results
+    successful_runs <- importance_results
   }
   
   # Validate that we have successful runs
   if (length(successful_runs) == 0) {
-    stop("No successful runs found in parameter_results")
+    stop("No successful runs found in importance_results")
   }
   
   # Extract scenario name for filenames
   scenario_name <- "unknown_scenario"
-  if ("run_info" %in% names(parameter_results) && 
-      "scenario" %in% names(parameter_results$run_info)) {
-    scenario_name <- parameter_results$run_info$scenario
+  if ("run_info" %in% names(importance_results) && 
+      "scenario" %in% names(importance_results$run_info)) {
+    scenario_name <- importance_results$run_info$scenario
   }
   scenario_clean <- gsub("[^A-Za-z0-9-]", "_", scenario_name)
   
