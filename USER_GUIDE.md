@@ -20,7 +20,6 @@ This guide provides comprehensive instructions for using MACROM (Mitigation and 
 8. [Customisation Options](#customisation-options)
 9. [Understanding Outputs](#understanding-outputs)
 10. [Troubleshooting](#troubleshooting)
-11. [Advanced Usage](#advanced-usage)
 12. [Frequently Asked Questions](#frequently-asked-questions)
 
 ---
