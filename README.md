@@ -112,7 +112,6 @@ The model uses optimal control theory to determine the most cost-effective combi
 - **Scenario Comparison**: Compare optimal strategies across SSP1-5 baseline scenarios
 - **Parameter Sensitivity**: Latin Hypercube Sampling for uncertainty quantification
 - **Delayed Deployment**: Assess costs of delaying mitigation or CDR implementation
-- **Temperature Overshoot**: Analyse peak warming and years above thresholds (1.5°C, 2°C)
 
 ## Citation
 
