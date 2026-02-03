@@ -116,18 +116,19 @@ Ensure these files are present in the `data/` directory:
 Your MACROM directory should look like this:
 ```
 MACROM/
-├── MACROM_workflow.Rmd
-├── README.md
-├── USER_GUIDE.md
-├── LICENSE
+├── MACROM_workflow.Rmd     # Main user interface
+├── README.md               # This file
+├── USER_GUIDE.md           # Detailed documentation
+├── LICENSE                 # CC_BY_4.0 licence
 ├── parameter_details.yml
 ├── parameter_details_fixed.yml
-├── data/
+├── data/                   # Processed data files
 │   ├── emissions.csv
 │   └── gwp.csv
-├── figs/              (will be created automatically)
-├── output/            (will be created automatically)
-└── src/
+├── data-raw/               # Raw, unprocessed data
+├── figs/                   # Generated figures and visualisations
+├── output/                 # Analysis outputs (RDS, CSV)
+└── src/                    # Source code (R functions)
     ├── data_extraction.R
     ├── data_preparation.R
     ├── delayed_deployment.R
