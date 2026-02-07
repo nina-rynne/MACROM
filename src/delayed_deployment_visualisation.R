@@ -58,7 +58,7 @@ DELAYED_DEPLOYMENT_PALETTES <- list(
 DELAYED_DEPLOYMENT_LABELS <- list(
   peak_temperature = "Peak\nTemp.\n(°C)",
   years_above_1p5 = "Years\nAbove\n1.5°C",
-  abatement_cost = "Abatement\nCost\n($ trillion)",
+  abatement_cost = "Costs\n($USD trillion)",
   temp_cost = "Temp.\nDamage\nCost\n($ trillion)",
   total_cost = "Total\nCost\n($ trillion)",
   mitig_cost = "Mitigation\nCost\n($ trillion)",
@@ -70,7 +70,7 @@ DELAYED_DEPLOYMENT_LABELS <- list(
 DELAYED_DEPLOYMENT_LABELS_SINGLE_LINE <- list(
   peak_temperature = "Peak Temperature (°C)",
   years_above_1p5 = "Years Above 1.5°C",
-  abatement_cost = "Abatement Cost ($ trillion)",
+  abatement_cost = "Costs ($USD trillion)",
   temp_cost = "Temperature Damage Cost ($ trillion)",
   total_cost = "Total Cost ($ trillion)",
   mitig_cost = "Mitigation Cost ($ trillion)",
@@ -365,6 +365,10 @@ calculate_delayed_deployment_gradients <- function(data,
 #' @param variables Character vector of variable names to calculate limits for
 #' @param shared_scale Logical indicating whether to use shared scale across
 #'   all variables (TRUE) or independent scales (FALSE). Default is FALSE.
+#' @param use_scale_limits Logical indicating whether to cap the colour scale at a
+#'   percentile threshold (TRUE) or use the full data range (FALSE). Default is FALSE.
+#' @param scale_limit_percentile Numeric percentile (0-100) at which to cap the
+#'   colour scale when use_scale_limits = TRUE. Default is 95.
 #' @param verbose Logical indicating whether to print limit information (default: TRUE)
 #' 
 #' @return Named list of limits:
@@ -395,6 +399,8 @@ calculate_delayed_deployment_gradients <- function(data,
 calculate_variable_limits <- function(data,
                                       variables,
                                       shared_scale = FALSE,
+                                      use_scale_limits = FALSE,
+                                      scale_limit_percentile = 95,
                                       verbose = TRUE) {
   
   # Validate inputs
@@ -422,13 +428,28 @@ calculate_variable_limits <- function(data,
       stop("No non-missing values found in specified variables")
     }
     
-    shared_limits <- range(all_values)
-    limits_list <- list(shared = shared_limits)
+    # Calculate base limits
+    min_val <- min(all_values)
+    max_val <- max(all_values)
     
-    if (verbose) {
+    # Apply percentile capping if requested
+    if (use_scale_limits) {
+      max_val <- quantile(all_values, probs = scale_limit_percentile / 100)
+      
+      if (verbose) {
+        actual_max <- max(all_values)
+        cat(sprintf("Shared scale with %g%% percentile cap:\n", scale_limit_percentile))
+        cat(sprintf("  Full range: [%.4f, %.4f]\n", min_val, actual_max))
+        cat(sprintf("  Capped range: [%.4f, %.4f]\n", min_val, max_val))
+        cat(sprintf("  Values above %.4f will be displayed as maximum colour\n", max_val))
+      }
+    } else if (verbose) {
       cat(sprintf("Shared scale across %d variables: [%.4f, %.4f]\n",
-                  length(variables), shared_limits[1], shared_limits[2]))
+                  length(variables), min_val, max_val))
     }
+    
+    shared_limits <- c(min_val, max_val)
+    limits_list <- list(shared = shared_limits)
     
   } else {
     # Calculate independent limits for each variable
@@ -442,17 +463,35 @@ calculate_variable_limits <- function(data,
         next
       }
       
-      var_limits <- range(var_values)
-      limits_list[[var]] <- var_limits
+      # Calculate base limits
+      min_val <- min(var_values)
+      max_val <- max(var_values)
       
-      if (verbose) {
-        cat(sprintf("  %s: [%.4f, %.4f]\n", var, var_limits[1], var_limits[2]))
+      # Apply percentile capping if requested
+      if (use_scale_limits) {
+        max_val <- quantile(var_values, probs = scale_limit_percentile / 100)
+        
+        if (verbose) {
+          actual_max <- max(var_values)
+          cat(sprintf("  %s with %g%% cap: [%.4f, %.4f] (full: [%.4f, %.4f])\n", 
+                      var, scale_limit_percentile, min_val, max_val, min_val, actual_max))
+        }
+      } else if (verbose) {
+        cat(sprintf("  %s: [%.4f, %.4f]\n", var, min_val, max_val))
       }
+      
+      var_limits <- c(min_val, max_val)
+      limits_list[[var]] <- var_limits
     }
     
     if (verbose && length(limits_list) > 0) {
-      cat(sprintf("Calculated independent scales for %d variables\n", 
-                  length(limits_list)))
+      scale_type <- if (use_scale_limits) {
+        sprintf("percentile-capped (%g%%)", scale_limit_percentile)
+      } else {
+        "independent"
+      }
+      cat(sprintf("Calculated %s scales for %d variables\n", 
+                  scale_type, length(limits_list)))
     }
   }
   
@@ -527,9 +566,9 @@ get_delayed_deployment_theme <- function(multi_row = FALSE) {
     title_size <- 9
     axis_title_size <- 7
     axis_text_size <- 6
-    legend_title_size <- 7
-    legend_text_size <- 6
-    legend_key_size <- 0.3
+    legend_title_size <- 6
+    legend_text_size <- 5.5
+    legend_key_size <- 0.22
     margin_size <- 2
   } else {
     # Larger text for single-row layouts (1-2 rows)
@@ -537,9 +576,9 @@ get_delayed_deployment_theme <- function(multi_row = FALSE) {
     title_size <- 10
     axis_title_size <- 9
     axis_text_size <- 8
-    legend_title_size <- 9
-    legend_text_size <- 8
-    legend_key_size <- 0.4
+    legend_title_size <- 8
+    legend_text_size <- 7
+    legend_key_size <- 0.35
     margin_size <- 3
   }
   
@@ -902,7 +941,7 @@ calculate_contour_breaks <- function(data,
 #' @param variable_label Character string for legend title (supports \n line breaks)
 #' @param scenario_name Character string with scenario name for plot title
 #' @param show_title Logical indicating whether to show plot title (default: TRUE)
-#' @param title_text Optional custom title text. If NULL and show_title = TRUE,
+#' @param title_text Optional custom title text. If NULL and show_title = FALSE,
 #'   uses scenario_name. Default is NULL.
 #' @param x_label Character string for x-axis label (default: "Mitigation Deployment Delay (years)")
 #' @param y_label Character string for y-axis label (default: "CDR Deployment Delay (years)")
@@ -945,7 +984,7 @@ create_delayed_deployment_base_heatmap <- function(scenario_data,
                                                    palette_info,
                                                    variable_label,
                                                    scenario_name,
-                                                   show_title = TRUE,
+                                                   show_title = FALSE,
                                                    title_text = NULL,
                                                    x_label = "Mitigation Deployment Delay (years)",
                                                    y_label = "CDR Deployment Delay (years)",
@@ -987,7 +1026,9 @@ create_delayed_deployment_base_heatmap <- function(scenario_data,
       name = variable_label,
       option = palette_info$option,
       direction = palette_info$direction,
-      limits = variable_limits
+      limits = variable_limits,
+      oob = scales::squish,  # Squish out-of-bounds values to max colour (not grey)
+      labels = scales::comma
     ) +
     labs(
       title = plot_title,
@@ -1085,7 +1126,7 @@ add_delayed_deployment_contours <- function(plot_object,
         alpha = contour_alpha,
         linewidth = contour_linewidth,
         inherit.aes = FALSE
-      )
+      ) 
   } else {
     # Validate explicit breaks
     if (!is.numeric(contour_breaks) || length(contour_breaks) < 2) {
@@ -1962,24 +2003,24 @@ extract_delayed_deployment_legend <- function(plot_object,
   }
   
   # Create temporary plot with legend in desired position
-  # Add larger legend specifications
+  # Add legend specifications with smaller sizes
   if (legend_position == "bottom") {
     plot_with_legend <- plot_object +
       theme(legend.position = legend_position) +
       guides(fill = guide_colorbar(
-        barwidth = 25,      # Increased from default
-        barheight = 1.2,    # Increased from default
+        barwidth = 15,      # Reduced from 25 to make narrower
+        barheight = 0.4,    # Reduced from 1.2 to make shorter
         title.position = "top",
         title.hjust = 0.5,
-        label.theme = element_text(size = 10),    # Larger text
-        title.theme = element_text(size = 11)     # Larger title
+        label.theme = element_text(size = 6),    # Smaller text
+        title.theme = element_text(size = 6)     # Smaller title
       ))
   } else {
     plot_with_legend <- plot_object +
       theme(legend.position = legend_position) +
       guides(fill = guide_colorbar(
-        barwidth = 1.5,     # Increased from default
-        barheight = 15,     # Increased from default
+        barwidth = 1.5,     # Keep same for right legends
+        barheight = 15,     # Keep same for right legends
         title.position = "top",
         title.hjust = 0.5,
         label.theme = element_text(size = 10),    # Larger text
@@ -2154,15 +2195,15 @@ assemble_delayed_deployment_dashboard <- function(plot_grid,
       main_grid <- row_plots[[1]] / row_plots[[2]] / row_plots[[3]] / row_plots[[4]] / row_plots[[5]]
     }
     
-    # Apply tight spacing to main grid
+    # Apply tight spacing to main grid with extra bottom margin for legend clearance
     main_grid <- main_grid + plot_layout() & 
-      theme(plot.margin = unit(c(1, 2, 1, 2), "mm"))  # Minimal top/bottom, normal left/right
+      theme(plot.margin = unit(c(1, 2, 3, 2), "mm"))  # Extra bottom margin to prevent legend overlap
     
     # Add legend to bottom
     combined_plot <- main_grid / legend_grob
     
-    # Set relative heights (main grid gets most space, legend gets larger strip)
-    height_ratios <- c(rep(1, n_variables), 0.2)
+    # Set relative heights (main grid gets most space, legend gets small but readable strip)
+    height_ratios <- c(rep(1, n_variables), 0.12)
     combined_plot <- combined_plot + patchwork::plot_layout(
       heights = height_ratios,
       design = NULL
@@ -2251,44 +2292,12 @@ add_delayed_deployment_annotations <- function(dashboard_object,
     stop("data must be a non-empty data frame")
   }
   
-  # Generate subtitle if not provided
-  if (is.null(subtitle) && add_statistics) {
-    n_scenarios <- length(unique(data$scenario_short))
-    n_combinations <- nrow(data)
-    n_feasible <- sum(data$feasible, na.rm = TRUE)
-    
-    subtitle <- sprintf("%d scenarios, %d combinations, %d feasible",
-                        n_scenarios, n_combinations, n_feasible)
-    
-    if (verbose) {
-      cat(sprintf("Generated subtitle: %s\n", subtitle))
-    }
-  } else if (is.null(subtitle)) {
-    subtitle <- ""
-  }
-  
   if (verbose) {
-    cat(sprintf("Adding annotations:\n  Title: %s\n  Subtitle: %s\n", 
-                title, subtitle))
+    cat("Skipping annotations (titles and subtitles removed per user request)\n")
   }
   
-  # Add annotations using patchwork
-  annotated_plot <- dashboard_object +
-    patchwork::plot_annotation(
-      title = title,
-      subtitle = subtitle,
-      theme = theme(
-        plot.title = element_text(size = title_size, face = "bold", hjust = 0.5),
-        plot.subtitle = element_text(size = subtitle_size, hjust = 0.5),
-        plot.margin = margin(10, 0, 10, 0)
-      )
-    )
-  
-  if (verbose) {
-    cat("Annotations added successfully\n")
-  }
-  
-  return(annotated_plot)
+  # Return dashboard without annotations
+  return(dashboard_object)
 }
 
 #' @title Save Dashboard to File
@@ -2459,6 +2468,14 @@ save_delayed_deployment_dashboard <- function(plot_object,
 #' @param shared_scale Logical indicating whether to use shared color scale across
 #'   all variables (TRUE) or independent scales (FALSE). Shared scales enable
 #'   direct magnitude comparison. Default is FALSE.
+#' @param use_scale_limits Logical indicating whether to cap the colour scale at a
+#'   percentile threshold (TRUE) or use the full data range (FALSE). When TRUE,
+#'   values above the threshold are displayed as the maximum colour. Useful for
+#'   data with extreme outliers. Default is FALSE.
+#' @param scale_limit_percentile Numeric percentile (0-100) at which to cap the
+#'   colour scale when use_scale_limits = TRUE. For example, 95 means the colour
+#'   scale spans from minimum to 95th percentile, with all higher values shown
+#'   as the maximum colour. Default is 95.
 #' @param add_contours Logical indicating whether to add contour lines (default: TRUE)
 #' @param contour_breaks Either "auto" for automatic calculation or a named list
 #'   of numeric vectors specifying breaks for each variable. Default is "auto".
@@ -2550,12 +2567,23 @@ save_delayed_deployment_dashboard <- function(plot_object,
 #'   variables = c("peak_temperature"),
 #'   color_palettes = custom_palettes
 #' )
+#' 
+#' # Use percentile capping for data with extreme outliers
+#' dashboard <- create_delayed_deployment_dashboard(
+#'   deployment_results = results,
+#'   variables = c("total_cost"),
+#'   use_scale_limits = TRUE,
+#'   scale_limit_percentile = 95,  # Cap at 95th percentile
+#'   add_contours = TRUE
+#' )
 #' }
 create_delayed_deployment_dashboard <- function(deployment_results,
                                                 variables,
                                                 color_palettes = NULL,
                                                 custom_labels = NULL,
                                                 shared_scale = FALSE,
+                                                use_scale_limits = FALSE,
+                                                scale_limit_percentile = 95,
                                                 add_contours = TRUE,
                                                 contour_breaks = "auto",
                                                 contour_alpha = 0.6,
@@ -2667,6 +2695,8 @@ create_delayed_deployment_dashboard <- function(deployment_results,
     data = plot_data,
     variables = variables,
     shared_scale = shared_scale,
+    use_scale_limits = use_scale_limits,
+    scale_limit_percentile = scale_limit_percentile,
     verbose = verbose
   )
   
@@ -2755,8 +2785,20 @@ create_delayed_deployment_dashboard <- function(deployment_results,
     theme_object = get_delayed_deployment_theme(multi_row = length(variables) > 1)
   )
   
-  # Add legend to theme
-  temp_plot <- temp_plot + theme(legend.position = "right")
+  # Add legend to theme with appropriate sizing
+  if (length(variables) == 1) {
+    # Right legend for single variable
+    temp_plot <- temp_plot + theme(legend.position = "right")
+  } else {
+    # Bottom legend for multiple variables - make it smaller
+    temp_plot <- temp_plot + theme(
+      legend.position = "bottom",
+      legend.key.width = unit(2, "cm"),   # Width of the color bar
+      legend.key.height = unit(0.3, "cm"), # Height of the color bar (make this smaller)
+      legend.title = element_text(size = 6),
+      legend.text = element_text(size = 5.5)
+    )
+  }
   
   # Determine legend position for final layout
   legend_position <- if (length(variables) == 1) "right" else "bottom"
