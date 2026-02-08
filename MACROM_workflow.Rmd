@@ -51,8 +51,8 @@ knitr::opts_chunk$set(echo = TRUE)
 # ============================================
 # Data Manipulation and Transformation
 # ============================================
-library(dplyr)        # Data manipulation
-library(tidyr)        # Data reshaping
+#library(dplyr)        # Data manipulation
+#library(tidyr)        # Data reshaping
 library(purrr)        # Functional programming tools
 library(tidyverse)    # Data science toolkit
 
@@ -87,6 +87,7 @@ library(viridisLite)  # Colourblind friendly palettes
 library(viridis)      # Colourblind friendly palettes
 library(colorspace)   # Advanced colour manipulation
 library(scales)       # Scale functions for visualisation
+library(metR)         # Contour line labelling
 ```
 
 ```{r data_preparation_call}
@@ -356,8 +357,8 @@ source(here::here("src", "optimal_control_core.R"))
 source(here::here("src", "delayed_deployment.R"))
 
 # USER CHOICE: Delay range and granularity
-max_delay_years <- 50        # Maximum delay to test (years)
-delay_step_size <- 10        # Step size (1 = yearly, 10 = every decade)
+max_delay_years <- 70        # Maximum delay to test (years)
+delay_step_size <- 1          # Step size (1 = yearly, 10 = every decade)
 
 # USER CHOICE: Scenarios to analyse
 # Options: "all" or vector like c("SSP2-Baseline", "SSP3-Baseline")
@@ -409,7 +410,7 @@ dashboard <- create_delayed_deployment_dashboard(
   # USER CHOICE: Variables to plot
   # Options: "peak_temperature", "years_above_1p5", "abatement_cost", 
   #          "temp_cost", "total_cost", "mitig_cost", "remov_cost"
-  variables = c("abatement_cost", "temp_cost", "total_cost"),
+  variables = c("total_cost", "abatement_cost", "temp_cost"),
   
   # USER CHOICE: Visual features
   add_contours = TRUE,
@@ -419,7 +420,10 @@ dashboard <- create_delayed_deployment_dashboard(
   
   # USER CHOICE: Styling
   color_palettes = NULL,
-  shared_scale = FALSE,
+  shared_scale = TRUE,
+  # Enable percentile capping
+  use_scale_limits = TRUE,
+  scale_limit_percentile = 70,
   save_plot = TRUE,
   width = 297,
   height = 210,

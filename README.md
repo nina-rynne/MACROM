@@ -2,6 +2,7 @@
 
 [![License: CC BY 4.0](https://img.shields.io/badge/License-CC%20BY%204.0-lightgrey.svg)](https://creativecommons.org/licenses/by/4.0/)
 [![R](https://img.shields.io/badge/R-%E2%89%A54.0.0-blue)](https://www.r-project.org/)
+[![DOI](https://zenodo.org/badge/1129406277.svg)](https://doi.org/10.5281/zenodo.18463950)
 
 **Authors:** Nina Rynne, Michael Bode, Melanie Roberts, Ryan Heneghan  
 **Institution:** Griffith University  
