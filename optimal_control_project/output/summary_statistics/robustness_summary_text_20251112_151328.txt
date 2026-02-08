@@ -1,0 +1,37 @@
+
+ROBUSTNESS ANALYSIS SUMMARY
+================================================================================
+
+Overall Results:
+  • Total datasets analysed: 15
+  • Robust outcomes: 0 (0.0%)
+  • Moderate sensitivity: 9 (60.0%)
+  • High sensitivity: 6 (40.0%)
+
+Average CV across all datasets: 0.3618
+
+Key Findings:
+
+1. BY SSP:
+
+   SSP1: MOSTLY SENSITIVE (0/3 robust)
+   SSP2: MIXED (0/3 robust)
+   SSP3: MIXED (0/3 robust)
+   SSP4: MIXED (0/3 robust)
+   SSP5: MIXED (0/3 robust)
+
+2. BY OUTPUT TYPE:
+
+   Total Cost: MOSTLY SENSITIVE (0/5 SSPs robust)
+   Total Mitigation: MIXED (0/5 SSPs robust)
+   Total Removal: MIXED (0/5 SSPs robust)
+
+================================================================================
+
+INTERPRETATION:
+
+The model outputs show SIGNIFICANT SENSITIVITY to parameter uncertainty.
+Outcomes vary considerably with different parameter values.
+Careful sensitivity analysis and uncertainty quantification are essential.
+
+================================================================================

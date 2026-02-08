@@ -2,4 +2,7 @@
 .Rhistory
 .RData
 .Ruserdata
-.README.html
+README.html
+/figs
+/output
+/optimal_control_project

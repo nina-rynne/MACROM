@@ -66,27 +66,30 @@ We use MACROM to assess the mitigation and CDR required to return temperature to
 ## Project Structure
 ```
 MACROM/
-├── MACROM_workflow.Rmd  # Main user interface
-├── README.md                      # This file
-├── USER_GUIDE.md                  # Detailed documentation
-├── LICENSE                        # CC-BY-4.0 licence
-├── data/                          # Processed data files
+├── MACROM_workflow.Rmd     # Main user interface
+├── README.md               # This file
+├── USER_GUIDE.md           # Detailed documentation
+├── LICENSE                 # CC_BY_4.0 licence
+├── parameter_details.yml
+├── parameter_details_fixed.yml
+├── data/                   # Processed data files
 │   ├── emissions.csv
 │   └── gwp.csv
-├── data-raw/                      # Raw, unprocessed data
-├── figs/                          # Generated figures and visualisations
-├── output/                        # Analysis outputs (RDS, CSV)
-└── src/                           # Source code (R functions)
+├── data-raw/               # Raw, unprocessed data
+├── figs/                   # Generated figures and visualisations
+├── output/                 # Analysis outputs (RDS, CSV)
+└── src/                    # Source code (R functions)
+    ├── data_extraction.R
     ├── data_preparation.R
-    ├── model_parameters.R
+    ├── delayed_deployment.R
+    ├── delayed_deployment_visualisation.R
     ├── latin_hypercube_sampling.R
+    ├── model_parameters.R
     ├── optimal_control_core.R
-    ├── scenario_comparison.R
-    ├── scenario_comparison_visualisation.R
     ├── parameter_importance.R
     ├── parameter_importance_visualisation.R
-    ├── delayed_deployment.R
-    └── delayed_deployment_visualisation.R
+    ├── scenario_comparison.R
+    └── scenario_comparison_visualisation.R
 ```
 
 ## Model Details
@@ -112,7 +115,6 @@ The model uses optimal control theory to determine the most cost-effective combi
 - **Scenario Comparison**: Compare optimal strategies across SSP1-5 baseline scenarios
 - **Parameter Sensitivity**: Latin Hypercube Sampling for uncertainty quantification
 - **Delayed Deployment**: Assess costs of delaying mitigation or CDR implementation
-- **Temperature Overshoot**: Analyse peak warming and years above thresholds (1.5°C, 2°C)
 
 ## Citation
 

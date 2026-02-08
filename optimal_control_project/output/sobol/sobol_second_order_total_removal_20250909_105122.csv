@@ -1,0 +1,17 @@
+param_i,param_j,S2,S2_conf
+tcre,econdampct,"[        nan         nan -0.00197736 -0.00156358  0.00671735 -0.00441507
+ -0.00741747]","[       nan        nan 0.05634276 0.05357128 0.05353624 0.05650466
+ 0.05530886]"
+tcre,discrate,"[        nan         nan         nan -0.00631081 -0.00562343 -0.00610057
+ -0.00559972]","[       nan        nan        nan 0.02643451 0.02668081 0.0267084
+ 0.02567412]"
+tcre,costmitiglow,"[       nan        nan        nan        nan 0.00914659 0.00731522
+ 0.00775225]","[       nan        nan        nan        nan 0.04007653 0.03077444
+ 0.03131276]"
+tcre,costremovlow,"[        nan         nan         nan         nan         nan -0.01192942
+  0.01422724]","[       nan        nan        nan        nan        nan 0.11472561
+ 0.11654741]"
+tcre,costmitigpeak,"[        nan         nan         nan         nan         nan         nan
+ -0.00356368]","[       nan        nan        nan        nan        nan        nan
+ 0.01004694]"
+tcre,costremovpeak,[nan nan nan nan nan nan nan],[nan nan nan nan nan nan nan]

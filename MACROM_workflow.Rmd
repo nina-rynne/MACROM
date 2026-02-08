@@ -409,7 +409,7 @@ dashboard <- create_delayed_deployment_dashboard(
   # USER CHOICE: Variables to plot
   # Options: "peak_temperature", "years_above_1p5", "abatement_cost", 
   #          "temp_cost", "total_cost", "mitig_cost", "remov_cost"
-  variables = c("abatement_cost", "temp_cost"),
+  variables = c("abatement_cost", "temp_cost", "total_cost"),
   
   # USER CHOICE: Visual features
   add_contours = TRUE,

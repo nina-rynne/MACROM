@@ -1,0 +1,16 @@
+ssp,output_type,robustness_category,cv,relative_iqr_pct,relative_ci90_pct,skewness,interpretation
+SSP1,totalcost,Sensitive,0.7080395790192398,106.15722468535242,276.8350732515008,1.1779638123754756,High sensitivity to parameter uncertainty (highly skewed distribution)
+SSP1,totalmitigation,Moderate,0.23512829913272162,32.498457801452126,77.19817954803506,-0.1331282334275864,Moderate sensitivity to parameter uncertainty
+SSP1,totalremoval,Sensitive,0.33606792563324256,50.77544684834643,110.24584888796898,0.10567460598531954,High sensitivity to parameter uncertainty
+SSP2,totalcost,Sensitive,0.6425566222608006,92.95457762865797,243.25613141084497,1.1400309313620614,High sensitivity to parameter uncertainty (highly skewed distribution)
+SSP2,totalmitigation,Moderate,0.15599762125412042,20.966303298727766,51.27104734098638,0.21050763406014875,Moderate sensitivity to parameter uncertainty
+SSP2,totalremoval,Moderate,0.2359016780039298,34.567378667764444,76.8292846440759,-0.006000898343472789,Moderate sensitivity to parameter uncertainty
+SSP3,totalcost,Sensitive,0.576780957806009,83.07479226144888,209.23062796501583,0.8941571315837842,High sensitivity to parameter uncertainty (moderately skewed)
+SSP3,totalmitigation,Moderate,0.1505103842518739,20.996134158344347,49.46479010967885,-0.11702045268590527,Moderate sensitivity to parameter uncertainty
+SSP3,totalremoval,Moderate,0.2325736519388937,34.29409042373406,76.78996108608467,0.1648508354003914,Moderate sensitivity to parameter uncertainty
+SSP4,totalcost,Sensitive,0.6400744751261801,93.41051799953111,240.16565206926245,1.0506544966394287,High sensitivity to parameter uncertainty (highly skewed distribution)
+SSP4,totalmitigation,Moderate,0.17569950043646188,24.46916455204208,58.14790455176488,-0.0334543832568111,Moderate sensitivity to parameter uncertainty
+SSP4,totalremoval,Moderate,0.2649131028024844,39.194070012997805,87.29280641633436,0.1190494612773854,Moderate sensitivity to parameter uncertainty
+SSP5,totalcost,Sensitive,0.6577439111738165,92.25120148304856,250.29475711032555,1.4535698249622848,High sensitivity to parameter uncertainty (highly skewed distribution)
+SSP5,totalmitigation,Moderate,0.17152963095383822,17.448636706660334,47.431217627701365,1.7751621262203203,Moderate sensitivity to parameter uncertainty (highly skewed distribution)
+SSP5,totalremoval,Moderate,0.24347605176586648,25.569073618366428,66.33613977006443,-1.4098635560577533,Moderate sensitivity to parameter uncertainty (highly skewed distribution)

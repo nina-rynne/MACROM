@@ -110,7 +110,7 @@ plot_scenario_comparison_emissions <- function(scenario_results,
   
   # Create cumulative emissions plot
   p <- ggplot(plot_data, aes(x = years, y = cumulative_emissions, color = scenario_clean)) +
-    geom_line(linewidth = 0.8) +
+    geom_line(linewidth = 1) +
     scale_color_manual(
       name = "Scenario",
       values = scenario_colors[1:length(unique(plot_data$scenario_clean))]
@@ -119,6 +119,11 @@ plot_scenario_comparison_emissions <- function(scenario_results,
       title = title,
       x = "Year",
       y = expression("Cumulative emissions (GtCO"[2]*")")
+    ) +
+    scale_y_continuous(
+      breaks = seq(-800, 800, by = 200),  # Ticks every 200 units
+      limits = c(-800, 800),
+      expand = expansion(mult = 0.02)  # Small padding
     ) +
     scenario_comparison_theme
   
@@ -158,7 +163,7 @@ plot_scenario_comparison_temperature <- function(scenario_results,
   
   # Create temperature trajectory plot
   p <- ggplot(plot_data, aes(x = years, y = temperature, color = scenario_clean)) +
-    geom_line(linewidth = 0.8) +
+    geom_line(linewidth = 1) +
     geom_hline(yintercept = 1.5, linetype = "dashed", alpha = 0.7, color = "red") +
     scale_color_manual(
       name = "Scenario",
@@ -208,7 +213,7 @@ plot_scenario_comparison_mitigation <- function(scenario_results,
   
   # Create mitigation strategies plot
   p <- ggplot(plot_data, aes(x = years, y = mitigation, color = scenario_clean)) +
-    geom_line(linewidth = 0.8) +
+    geom_line(linewidth = 1) +
     scale_color_manual(
       name = "Scenario",
       values = scenario_colors[1:length(unique(plot_data$scenario_clean))]
@@ -256,7 +261,7 @@ plot_scenario_comparison_cdr <- function(scenario_results,
   
   # Create CDR strategies plot
   p <- ggplot(plot_data, aes(x = years, y = cdr, color = scenario_clean)) +
-    geom_line(linewidth = 0.8) +
+    geom_line(linewidth = 1) +
     scale_color_manual(
       name = "Scenario",
       values = scenario_colors[1:length(unique(plot_data$scenario_clean))]
@@ -310,7 +315,7 @@ plot_scenario_comparison_abatement_cost <- function(scenario_results,
   
   # Create abatement costs plot
   p <- ggplot(plot_data, aes(x = years, y = abatement_cost_proportion, color = scenario_clean)) +
-    geom_line(linewidth = 0.8) +
+    geom_line(linewidth = 1) +
     scale_color_manual(
       name = "Scenario",
       values = scenario_colors[1:length(unique(plot_data$scenario_clean))]
@@ -365,7 +370,7 @@ plot_scenario_comparison_damage_cost <- function(scenario_results,
   
   # Create damage costs plot
   p <- ggplot(plot_data, aes(x = years, y = damage_cost_proportion, color = scenario_clean)) +
-    geom_line(linewidth = 0.8) +
+    geom_line(linewidth = 1) +
     scale_color_manual(
       name = "Scenario",
       values = scenario_colors[1:length(unique(plot_data$scenario_clean))]
@@ -476,26 +481,26 @@ create_scenario_comparison_dashboard <- function(scenario_results,
   shared_cost_limits <- c(0, max(c(abatement_cost_data$abatement_cost, damage_cost_data$damage_cost), na.rm = TRUE))
   
   # Create individual plots with panel labels
-  p1 <- plot_scenario_comparison_emissions(scenario_data) + 
-    labs(title = "a) Cumulative emissions")
+  p1 <- plot_scenario_comparison_emissions(scenario_data) +
+    labs(title = expression(bold("a)") ~ "Cumulative emissions"))
   
-  p2 <- plot_scenario_comparison_temperature(scenario_data) + 
-    labs(title = "b) Temperature trajectories")
+  p2 <- plot_scenario_comparison_temperature(scenario_data) +
+    labs(title = expression(bold("b)") ~ "Temperature trajectories"))
   
-  p3 <- plot_scenario_comparison_mitigation(scenario_data) + 
-    labs(title = "c) Mitigation strategies") +
+  p3 <- plot_scenario_comparison_mitigation(scenario_data) +
+    labs(title = expression(bold("c)") ~ "Mitigation strategies")) +
     coord_cartesian(ylim = shared_abatement_limits)
   
-  p4 <- plot_scenario_comparison_cdr(scenario_data) + 
-    labs(title = "d) CDR strategies") +
+  p4 <- plot_scenario_comparison_cdr(scenario_data) +
+    labs(title = expression(bold("d)") ~ "CDR strategies")) +
     coord_cartesian(ylim = shared_abatement_limits)
   
-  p5 <- plot_scenario_comparison_abatement_cost(scenario_data) + 
-    labs(title = "e) Abatement costs") +
+  p5 <- plot_scenario_comparison_abatement_cost(scenario_data) +
+    labs(title = expression(bold("e)") ~ "Abatement costs")) +
     coord_cartesian(ylim = shared_cost_limits)
   
-  p6 <- plot_scenario_comparison_damage_cost(scenario_data) + 
-    labs(title = "f) Temperature-related damages") +
+  p6 <- plot_scenario_comparison_damage_cost(scenario_data) +
+    labs(title = expression(bold("f)") ~ "Temperature-related damages")) +
     coord_cartesian(ylim = shared_cost_limits)
   
   # Extract shared legend from one of the plots
@@ -519,10 +524,8 @@ create_scenario_comparison_dashboard <- function(scenario_results,
   final_plot <- final_plots + 
     plot_annotation(
       title = "Scenario Comparison: Optimal Control Results",
-      subtitle = paste0("Comparing ", n_scenarios, " scenarios"),
       theme = theme(
         plot.title = element_text(size = 12, face = "bold", hjust = 0.5),
-        plot.subtitle = element_text(size = 10, hjust = 0.5),
         plot.margin = margin(10, 0, 10, 0)
       )
     )
@@ -536,8 +539,16 @@ create_scenario_comparison_dashboard <- function(scenario_results,
     filepath <- here::here("figs", filename)
     ggsave(filepath, final_plot, width = 190, height = 260, units = "mm", device = cairo_pdf)
     
+    # Save PNG version for publication
+    # Double-column width with aspect ratio suitable for 2x3 panel layout
+    png_filename <- sub("\\.pdf$", ".png", filename)
+    png_filepath <- here::here("figs", png_filename)
+    ggsave(png_filepath, final_plot, width = 183, height = 250, units = "mm", 
+           device = "png", dpi = 300, bg = "white")
+    
     if (verbose) {
       cat("Scenario comparison dashboard saved to:", filepath, "\n")
+      cat("PNG version saved to:", png_filepath, "\n")
     }
   }
   

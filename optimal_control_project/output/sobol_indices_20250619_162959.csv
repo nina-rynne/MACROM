@@ -1,0 +1,15 @@
+derived_labels,index
+costmitigunit,1.1350960602229002e-07
+costmitigunit_costremovunit,1.2917067063358864e-08
+costmitigunit_discrate,5.696288983738049e-08
+costmitigunit_econdampct,1.100636061572622e-08
+costremovunit,4.5110188145310446e-08
+costremovunit_discrate,9.516107135759761e-08
+costremovunit_econdampct,6.51773319711711e-09
+discrate,1.2659504796375387e-06
+econdampct_discrate,7.682661253568317e-09
+tcre,0.9999976644812058
+tcre_costmitigunit,1.2075541688529053e-08
+tcre_costremovunit,7.140448772505928e-09
+tcre_discrate,1.9303008002985407e-08
+tcre_econdampct,1.1467853444173076e-08

@@ -2739,7 +2739,10 @@ create_delayed_deployment_dashboard <- function(deployment_results,
   # Get first plot data for legend extraction
   legend_data <- plot_data %>% filter(scenario_short == first_scenario)
   
-  # Create temporary plot with legend
+  # Determine legend position for final layout FIRST
+  legend_position <- if (length(variables) == 1) "right" else "bottom"
+  
+  # Create temporary plot with legend in the correct position
   temp_plot <- create_delayed_deployment_base_heatmap(
     scenario_data = legend_data,
     variable = first_variable,
@@ -2753,13 +2756,9 @@ create_delayed_deployment_dashboard <- function(deployment_results,
     scenario_name = first_scenario,
     show_title = FALSE,
     theme_object = get_delayed_deployment_theme(multi_row = length(variables) > 1)
-  )
-  
-  # Add legend to theme
-  temp_plot <- temp_plot + theme(legend.position = "right")
-  
-  # Determine legend position for final layout
-  legend_position <- if (length(variables) == 1) "right" else "bottom"
+  ) +
+    # Override the theme's legend.position = "none" with the correct position
+    theme(legend.position = legend_position)
   
   # Extract legend
   legend_grob <- extract_delayed_deployment_legend(
