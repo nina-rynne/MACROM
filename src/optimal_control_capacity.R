@@ -52,6 +52,13 @@
 #' @param tolerance Convergence tolerance (default: 0.001)
 #' @param update_weight Smoothing weight for control updates (default: 0.05)
 #' @param epsilon Strict inequality parameter to ensure u_m < E(t) (default: 0.01)
+#' @param use_mitigation_capacity_limit Logical: activate time-varying capacity constraint
+#'   on u_m (default: FALSE). When TRUE, u_m(t) is capped by mitigation_capacity_function(t).
+#'   This enforces realistic ramp-up constraints on mitigation deployment.
+#' @param mitigation_capacity_function Function with signature function(year) that returns
+#'   the maximum feasible mitigation deployment in GtCO2/year for that year. Use helper
+#'   functions from capacity_helpers.R to construct. Required when
+#'   use_mitigation_capacity_limit = TRUE. (default: NULL)
 #' @param use_cdr_capacity_limit Logical: activate time-varying capacity constraint
 #'   on u_r (default: FALSE). When TRUE, u_r(t) is capped by cdr_capacity_function(t).
 #'   This enforces realistic ramp-up constraints to prevent unrealistic deployment spikes.
@@ -105,6 +112,8 @@ optimal_control_solve <- function(parameter_df,
                                   tolerance = 0.001,
                                   update_weight = 0.05,
                                   epsilon = 0.01,
+                                  use_mitigation_capacity_limit = FALSE,
+                                  mitigation_capacity_function = NULL,
                                   use_cdr_capacity_limit = FALSE,
                                   cdr_capacity_function = NULL,
                                   verbose = FALSE) {
@@ -121,7 +130,15 @@ optimal_control_solve <- function(parameter_df,
     stop("emissions_df and economic_df must be data frames")
   }
   
-  # Validate capacity constraint arguments
+  # Validate mitigation capacity constraint arguments
+  if (use_mitigation_capacity_limit && is.null(mitigation_capacity_function)) {
+    stop("mitigation_capacity_function must be supplied when use_mitigation_capacity_limit = TRUE")
+  }
+  if (use_mitigation_capacity_limit && !is.function(mitigation_capacity_function)) {
+    stop("mitigation_capacity_function must be a function")
+  }
+  
+  # Validate CDR capacity constraint arguments
   if (use_cdr_capacity_limit && is.null(cdr_capacity_function)) {
     stop("cdr_capacity_function must be supplied when use_cdr_capacity_limit = TRUE")
   }
@@ -324,13 +341,24 @@ optimal_control_solve <- function(parameter_df,
         if (discriminant >= 0 && adjoint_var[i] >= 0) {
           u_m_optimal <- (-b + sqrt(discriminant)) / (2 * a)
           
-          # Apply bounds with STRICT INEQUALITY at upper bound
+          # Apply capacity constraint first, then emissions constraint
           if (u_m_optimal <= 0) {
             new_mitig[i] <- 0
-          } else if (u_m_optimal >= baseline_emissions[i] - epsilon) {
-            new_mitig[i] <- baseline_emissions[i] - epsilon
           } else {
-            new_mitig[i] <- u_m_optimal
+            # Apply capacity constraint if active
+            if (use_mitigation_capacity_limit) {
+              capacity_limit <- mitigation_capacity_function(current_year)
+              u_m_capped <- min(u_m_optimal, capacity_limit)
+            } else {
+              u_m_capped <- u_m_optimal
+            }
+            
+            # Apply emissions constraint (strict inequality u_m < E)
+            if (u_m_capped >= baseline_emissions[i] - epsilon) {
+              new_mitig[i] <- baseline_emissions[i] - epsilon
+            } else {
+              new_mitig[i] <- u_m_capped
+            }
           }
         } else {
           new_mitig[i] <- 0
@@ -523,6 +551,8 @@ optimal_control_solve <- function(parameter_df,
 #' @param max_shooting_iterations Maximum shooting method iterations (default: 100)
 #' @param shooting_tolerance Tolerance for emissions constraint (default: 1.0 GtCO2)
 #' @param lambda_bounds Initial bounds for terminal adjoint [low, high] (default: c(0, 5000))
+#' @param use_mitigation_capacity_limit Passed through to optimal_control_solve (default: FALSE)
+#' @param mitigation_capacity_function Passed through to optimal_control_solve (default: NULL)
 #' @param use_cdr_capacity_limit Passed through to optimal_control_solve (default: FALSE)
 #' @param cdr_capacity_function Passed through to optimal_control_solve (default: NULL)
 #' @param verbose Print progress information (default: FALSE)
@@ -557,6 +587,8 @@ optimal_control_shooting <- function(parameter_df,
                                      max_shooting_iterations = 1000,
                                      shooting_tolerance = 1.0,
                                      lambda_bounds = c(-50, 50),
+                                     use_mitigation_capacity_limit = FALSE,
+                                     mitigation_capacity_function = NULL,
                                      use_cdr_capacity_limit = FALSE,
                                      cdr_capacity_function = NULL,
                                      verbose = TRUE) {
@@ -596,16 +628,18 @@ optimal_control_shooting <- function(parameter_df,
   
   # Test lower bound
   result_low <- optimal_control_solve(
-    parameter_df           = parameter_df,
-    emissions_df           = emissions_scenario,
-    economic_df            = economic_scenario,
-    target_emissions       = target_emissions,
-    terminal_adjoint       = lambda_low,
-    mitigation_delay_years = mitigation_delay_years,
-    cdr_delay_years        = cdr_delay_years,
-    use_cdr_capacity_limit = use_cdr_capacity_limit,
-    cdr_capacity_function  = cdr_capacity_function,
-    verbose                = FALSE
+    parameter_df                   = parameter_df,
+    emissions_df                   = emissions_scenario,
+    economic_df                    = economic_scenario,
+    target_emissions               = target_emissions,
+    terminal_adjoint               = lambda_low,
+    mitigation_delay_years         = mitigation_delay_years,
+    cdr_delay_years                = cdr_delay_years,
+    use_mitigation_capacity_limit  = use_mitigation_capacity_limit,
+    mitigation_capacity_function   = mitigation_capacity_function,
+    use_cdr_capacity_limit         = use_cdr_capacity_limit,
+    cdr_capacity_function          = cdr_capacity_function,
+    verbose                        = FALSE
   )
   
   if (result_low$converged) {
@@ -621,16 +655,18 @@ optimal_control_shooting <- function(parameter_df,
   
   # Test upper bound
   result_high <- optimal_control_solve(
-    parameter_df           = parameter_df,
-    emissions_df           = emissions_scenario,
-    economic_df            = economic_scenario,
-    target_emissions       = target_emissions,
-    terminal_adjoint       = lambda_high,
-    mitigation_delay_years = mitigation_delay_years,
-    cdr_delay_years        = cdr_delay_years,
-    use_cdr_capacity_limit = use_cdr_capacity_limit,
-    cdr_capacity_function  = cdr_capacity_function,
-    verbose                = TRUE
+    parameter_df                   = parameter_df,
+    emissions_df                   = emissions_scenario,
+    economic_df                    = economic_scenario,
+    target_emissions               = target_emissions,
+    terminal_adjoint               = lambda_high,
+    mitigation_delay_years         = mitigation_delay_years,
+    cdr_delay_years                = cdr_delay_years,
+    use_mitigation_capacity_limit  = use_mitigation_capacity_limit,
+    mitigation_capacity_function   = mitigation_capacity_function,
+    use_cdr_capacity_limit         = use_cdr_capacity_limit,
+    cdr_capacity_function          = cdr_capacity_function,
+    verbose                        = TRUE
   )
   
   if (result_high$converged) {
@@ -690,32 +726,36 @@ optimal_control_shooting <- function(parameter_df,
     
     # Evaluate at new point
     result_new <- optimal_control_solve(
-      parameter_df           = parameter_df,
-      emissions_df           = emissions_scenario,
-      economic_df            = economic_scenario,
-      target_emissions       = target_emissions,
-      terminal_adjoint       = lambda_new,
-      mitigation_delay_years = mitigation_delay_years,
-      cdr_delay_years        = cdr_delay_years,
-      use_cdr_capacity_limit = use_cdr_capacity_limit,
-      cdr_capacity_function  = cdr_capacity_function,
-      verbose                = TRUE
+      parameter_df                   = parameter_df,
+      emissions_df                   = emissions_scenario,
+      economic_df                    = economic_scenario,
+      target_emissions               = target_emissions,
+      terminal_adjoint               = lambda_new,
+      mitigation_delay_years         = mitigation_delay_years,
+      cdr_delay_years                = cdr_delay_years,
+      use_mitigation_capacity_limit  = use_mitigation_capacity_limit,
+      mitigation_capacity_function   = mitigation_capacity_function,
+      use_cdr_capacity_limit         = use_cdr_capacity_limit,
+      cdr_capacity_function          = cdr_capacity_function,
+      verbose                        = TRUE
     )
     
     if (!result_new$converged) {
       if (verbose) cat("Inner loop did not converge, trying midpoint\n")
       lambda_new <- (lambda_low + lambda_high) / 2
       result_new <- optimal_control_solve(
-        parameter_df           = parameter_df,
-        emissions_df           = emissions_scenario,
-        economic_df            = economic_scenario,
-        target_emissions       = target_emissions,
-        terminal_adjoint       = lambda_new,
-        mitigation_delay_years = mitigation_delay_years,
-        cdr_delay_years        = cdr_delay_years,
-        use_cdr_capacity_limit = use_cdr_capacity_limit,
-        cdr_capacity_function  = cdr_capacity_function,
-        verbose                = TRUE
+        parameter_df                   = parameter_df,
+        emissions_df                   = emissions_scenario,
+        economic_df                    = economic_scenario,
+        target_emissions               = target_emissions,
+        terminal_adjoint               = lambda_new,
+        mitigation_delay_years         = mitigation_delay_years,
+        cdr_delay_years                = cdr_delay_years,
+        use_mitigation_capacity_limit  = use_mitigation_capacity_limit,
+        mitigation_capacity_function   = mitigation_capacity_function,
+        use_cdr_capacity_limit         = use_cdr_capacity_limit,
+        cdr_capacity_function          = cdr_capacity_function,
+        verbose                        = TRUE
       )
     }
     

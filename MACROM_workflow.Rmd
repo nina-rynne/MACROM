@@ -20,7 +20,7 @@ date: "January 2026"
 #   Rynne, N., Bode, M., Roberts, M., & Heneghan, R. (2025). 
 #   MACROM: An Optimal Control Model for Balancing Climate Change 
 #   Abatement and Damage Trade-offs.
-#   https://doi.org/10.31223/X5SB5W
+#   https://doi.org/10.5281/zenodo.18463951
 # 
 # Version: 1.0.0
 # Last updated: January 2026
@@ -472,65 +472,6 @@ comprehensive_cost_dashboard <- create_comprehensive_cost_delay_dashboard(
   height = 260
 )
 print(comprehensive_cost_dashboard)
-```
-
-```{r iso_scenario_comparison_analysis, eval=FALSE}
-# ==============================================================================
-# Scenario Comparison Analysis
-# ==============================================================================
-# Compare optimal control solutions across different SSP baseline scenarios
-#
-# REQUIREMENTS: Must use single parameter set (parameter_df with 1 row)
-# OUTPUTS: Saved automatically to output/ directory
-# RUNTIME: ~5-15 minutes for 5 scenarios with parallel processing
-#          ~longer when use_iso_remov = TRUE due to nested shooting loops
-
-# Source required functions
-source(here::here("src", "optimal_control_isoperimetric.R"))
-source(here::here("src", "isoperimetric_scenario_comparison.R"))
-
-# USER CHOICE: Select which SSP scenarios to compare
-scenarios_to_compare <- c("SSP3-Baseline", "SSP4-Baseline", "SSP5-Baseline")
-
-# USER CHOICE: Delay settings (typically keep at 0 for baseline comparison)
-mitigation_delay <- 0  # Years before mitigation begins
-cdr_delay        <- 0  # Years before CDR deployment begins
-
-# USER CHOICE: Isoperimetric inequality constraint on u_r
-# When use_iso_remov = TRUE, total CDR is constrained to <= iso_remov_target.
-# Scenarios where unconstrained CDR already falls below the target are
-# returned unchanged (constraint non-binding, lambda_iso_remov = 0).
-# Set use_iso_remov = FALSE to revert to standard unconstrained shooting.
-use_iso_remov    <- TRUE  # Set TRUE to activate upper bound on total CDR
-iso_remov_target <- 200   # Upper bound for integral of u_r in GtCO2
-                           # (e.g. 1000); only used when use_iso_remov = TRUE
-lambda_iso_bounds <- c(-1, 0)  # Bracket for outer secant search.
-                               # Upper bound is always 0 by KKT condition.
-                               # Only lambda_iso_bounds[1] matters: make it
-                               # negative enough to bracket the binding case.
-                               # Go more negative (e.g. c(-0.5, 0)) if the
-                               # target is well below the unconstrained CDR.
-
-# Run scenario comparison
-scenario_comparison_results <- run_scenario_comparison(
-  parameter_df           = parameter_df[1, ],    # Must be single row
-  emissions_df           = emissions_df,
-  economic_df            = economic_df,
-  scenarios              = scenarios_to_compare,
-  mitigation_delay_years = mitigation_delay,
-  cdr_delay_years        = cdr_delay,
-  use_iso_remov          = use_iso_remov,         # Isoperimetric constraint flag
-  iso_remov_target       = iso_remov_target,      # Target integral of u_r
-  lambda_iso_bounds      = lambda_iso_bounds,     # Outer secant search bounds
-  use_parallel           = TRUE,                  # Set FALSE if parallel issues occur
-  save_results           = TRUE,                  # Automatically saves to output/
-  verbose                = FALSE                  # Set TRUE for detailed progress
-)
-
-# Display summary
-if (!is.null(scenario_comparison_results$comparison_summary)) {
-  print(scenario_comparison_results$comparison_summary)
-}
 ```
 
 ```{r scenario_comparison_analysis_capacity, eval=FALSE}

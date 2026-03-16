@@ -29,9 +29,14 @@
 #' @param scenarios Vector of scenario names to compare (e.g., c("SSP2-Baseline", "SSP3-Baseline"))
 #' @param mitigation_delay_years Number of years to delay mitigation start (default: 0)
 #' @param cdr_delay_years Number of years to delay carbon dioxide removal start (default: 0)
+#' @param use_mitigation_capacity_limit Logical: activate mitigation capacity constraint (default: FALSE).
+#'   When TRUE, applies time-varying capacity limits to mitigation deployment across all scenarios.
+#' @param mitigation_capacity_function Capacity function for mitigation. Must be a function
+#'   with signature function(year) returning max mitigation in GtCO2/year. Use helpers from
+#'   capacity_helpers.R. Required when use_mitigation_capacity_limit = TRUE (default: NULL).
 #' @param use_cdr_capacity_limit Logical: activate CDR capacity constraint (default: FALSE).
 #'   When TRUE, applies time-varying capacity limits to CDR deployment across all scenarios.
-#' @param cdr_capacity_function Capacity function passed to all scenarios. Must be a function
+#' @param cdr_capacity_function Capacity function for CDR. Must be a function
 #'   with signature function(year) returning max CDR in GtCO2/year. Use helpers from
 #'   capacity_helpers.R. Required when use_cdr_capacity_limit = TRUE (default: NULL).
 #' @param use_parallel Whether to use parallel processing across scenarios (default: TRUE)
@@ -66,13 +71,15 @@ run_scenario_comparison <- function(parameter_df,
                                     emissions_df,
                                     economic_df,
                                     scenarios,
-                                    mitigation_delay_years = 0,     # Years to delay mitigation
-                                    cdr_delay_years = 0,            # Years to delay CDR
-                                    use_cdr_capacity_limit = FALSE, # Enable CDR capacity constraint
-                                    cdr_capacity_function = NULL,   # Capacity function
-                                    use_parallel = TRUE,            # Enable parallel processing
-                                    verbose = TRUE,                 # display progress logging
-                                    save_results = TRUE,            # save results as RDS and csv
+                                    mitigation_delay_years = 0,              # Years to delay mitigation
+                                    cdr_delay_years = 0,                     # Years to delay CDR
+                                    use_mitigation_capacity_limit = FALSE,   # Enable mitigation capacity constraint
+                                    mitigation_capacity_function = NULL,     # Mitigation capacity function
+                                    use_cdr_capacity_limit = FALSE,          # Enable CDR capacity constraint
+                                    cdr_capacity_function = NULL,            # CDR capacity function
+                                    use_parallel = TRUE,                     # Enable parallel processing
+                                    verbose = TRUE,                          # display progress logging
+                                    save_results = TRUE,                     # save results as RDS and csv
                                     output_dir = "output",
                                     output_prefix = "scenario_comparison") {
   
@@ -121,6 +128,13 @@ run_scenario_comparison <- function(parameter_df,
   }
   
   # Validate capacity constraint arguments
+  if (use_mitigation_capacity_limit && is.null(mitigation_capacity_function)) {
+    stop("mitigation_capacity_function must be supplied when use_mitigation_capacity_limit = TRUE")
+  }
+  if (use_mitigation_capacity_limit && !is.function(mitigation_capacity_function)) {
+    stop("mitigation_capacity_function must be a function")
+  }
+  
   if (use_cdr_capacity_limit && is.null(cdr_capacity_function)) {
     stop("cdr_capacity_function must be supplied when use_cdr_capacity_limit = TRUE")
   }
@@ -140,6 +154,9 @@ run_scenario_comparison <- function(parameter_df,
     cat("Parameter sets:", nrow(parameter_df), "\n")
     cat("Mitigation delay:", mitigation_delay_years, "years\n")
     cat("CDR delay:", cdr_delay_years, "years\n")
+    if (use_mitigation_capacity_limit) {
+      cat("Mitigation capacity constraint: ACTIVE\n")
+    }
     if (use_cdr_capacity_limit) {
       cat("CDR capacity constraint: ACTIVE\n")
     }
@@ -159,15 +176,17 @@ run_scenario_comparison <- function(parameter_df,
     tryCatch({
       # Run optimal control algorithm for this scenario
       result <- optimal_control_shooting(
-        parameter_df           = parameter_df,
-        emissions_df           = emissions_df,
-        economic_df            = economic_df,
-        scenario               = scenario_name,
-        mitigation_delay_years = mitigation_delay_years,
-        cdr_delay_years        = cdr_delay_years,
-        use_cdr_capacity_limit = use_cdr_capacity_limit,
-        cdr_capacity_function  = cdr_capacity_function,
-        verbose                = FALSE  # Suppress individual scenario output
+        parameter_df                   = parameter_df,
+        emissions_df                   = emissions_df,
+        economic_df                    = economic_df,
+        scenario                       = scenario_name,
+        mitigation_delay_years         = mitigation_delay_years,
+        cdr_delay_years                = cdr_delay_years,
+        use_mitigation_capacity_limit  = use_mitigation_capacity_limit,
+        mitigation_capacity_function   = mitigation_capacity_function,
+        use_cdr_capacity_limit         = use_cdr_capacity_limit,
+        cdr_capacity_function          = cdr_capacity_function,
+        verbose                        = FALSE  # Suppress individual scenario output
       )
       
       # Return success with result
@@ -218,6 +237,8 @@ run_scenario_comparison <- function(parameter_df,
                                 "economic_df",
                                 "mitigation_delay_years",
                                 "cdr_delay_years",
+                                "use_mitigation_capacity_limit",
+                                "mitigation_capacity_function",
                                 "use_cdr_capacity_limit",
                                 "cdr_capacity_function"),
                               envir = environment())
@@ -444,18 +465,19 @@ run_scenario_comparison <- function(parameter_df,
         year_mitig_capped = year_mitig_capped,
         failed_scenarios = failed_scenarios,
         run_info = list(
-          scenarios              = scenarios,
-          n_scenarios            = length(scenarios),
-          n_successful           = length(scenario_results),
-          n_failed               = length(failed_scenarios),
-          parameter_sets         = nrow(parameter_df),
-          mitigation_delay_years = mitigation_delay_years,
-          cdr_delay_years        = cdr_delay_years,
-          use_cdr_capacity_limit = use_cdr_capacity_limit,
-          use_parallel           = use_parallel,
-          start_time             = start_time,
-          end_time               = Sys.time(),
-          total_time_minutes     = as.numeric(total_time)
+          scenarios                      = scenarios,
+          n_scenarios                    = length(scenarios),
+          n_successful                   = length(scenario_results),
+          n_failed                       = length(failed_scenarios),
+          parameter_sets                 = nrow(parameter_df),
+          mitigation_delay_years         = mitigation_delay_years,
+          cdr_delay_years                = cdr_delay_years,
+          use_mitigation_capacity_limit  = use_mitigation_capacity_limit,
+          use_cdr_capacity_limit         = use_cdr_capacity_limit,
+          use_parallel                   = use_parallel,
+          start_time                     = start_time,
+          end_time                       = Sys.time(),
+          total_time_minutes             = as.numeric(total_time)
         )
       ),
       output_dir = output_dir,
@@ -474,18 +496,19 @@ run_scenario_comparison <- function(parameter_df,
     year_mitig_capped = year_mitig_capped,
     failed_scenarios = failed_scenarios,
     run_info = list(
-      scenarios              = scenarios,
-      n_scenarios            = length(scenarios),
-      n_successful           = length(scenario_results),
-      n_failed               = length(failed_scenarios),
-      parameter_sets         = nrow(parameter_df),
-      mitigation_delay_years = mitigation_delay_years,
-      cdr_delay_years        = cdr_delay_years,
-      use_cdr_capacity_limit = use_cdr_capacity_limit,
-      use_parallel           = use_parallel,
-      start_time             = start_time,
-      end_time               = Sys.time(),
-      total_time_minutes     = as.numeric(total_time)
+      scenarios                      = scenarios,
+      n_scenarios                    = length(scenarios),
+      n_successful                   = length(scenario_results),
+      n_failed                       = length(failed_scenarios),
+      parameter_sets                 = nrow(parameter_df),
+      mitigation_delay_years         = mitigation_delay_years,
+      cdr_delay_years                = cdr_delay_years,
+      use_mitigation_capacity_limit  = use_mitigation_capacity_limit,
+      use_cdr_capacity_limit         = use_cdr_capacity_limit,
+      use_parallel                   = use_parallel,
+      start_time                     = start_time,
+      end_time                       = Sys.time(),
+      total_time_minutes             = as.numeric(total_time)
     )
   ))
 } # Close the run_scenario_comparison function

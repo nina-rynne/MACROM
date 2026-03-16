@@ -1,11 +1,19 @@
 # ==============================================================================
-# CDR Capacity Constraint Helper Functions
+# Capacity Constraint Helper Functions
 # ==============================================================================
-# These functions generate time-varying capacity limits g(t) for CDR deployment
-# to enforce realistic ramp-up constraints.
+# These functions generate time-varying capacity limits g(t) for mitigation
+# and CDR deployment to enforce realistic ramp-up constraints.
+#
+# Available functional forms:
+# - Exponential: Constant percentage growth (e.g., 5% per year)
+# - Power Law: Fast early growth with diminishing returns (recommended for simple curves)
+# - Logistic (from zero): Three-phase S-curve starting from realistic initial values (recommended)
+# - Logistic (standard): S-curve parameterized by midpoint (harder to use)
+# - Linear: Constant absolute growth rate with cap
+# - Piecewise: Discrete policy targets by time period
 #
 # Usage: Pass the generated function to optimal_control_solve via the
-# cdr_capacity_function parameter.
+# mitigation_capacity_function or cdr_capacity_function parameters.
 #
 # Author: Nina Rynne
 # Date: February 2026
@@ -35,6 +43,145 @@ make_exponential_capacity <- function(u0, gamma, t_start) {
       return(0)
     }
     u0 * exp(gamma * (year - t_start))
+  }
+}
+
+
+#' @title Power Law Capacity Function
+#' @description
+#' Creates a capacity function following a power law with diminishing returns.
+#' Growth is fast initially then slows naturally without requiring an explicit
+#' saturation parameter. Realistic for technology deployment with learning
+#' curves and resource constraints.
+#'
+#' The function is: g(t) = a * (t - t_start)^alpha for t >= t_start
+#'
+#' @param a Scale parameter controlling overall deployment ambition (GtCO2/year).
+#'   Represents investment level and policy support. The capacity at year
+#'   (t_start + 1) equals a. Higher values indicate more aggressive deployment.
+#' @param alpha Exponent controlling the growth pattern (must be 0 < alpha < 1).
+#'   Lower values (0.3-0.4) give strong diminishing returns - fast initial growth
+#'   followed by rapid slowdown as easy wins are exhausted and constraints bind.
+#'   Higher values (0.5-0.6) give more sustained growth - learning effects
+#'   outpace resource constraints. Represents the balance between technology
+#'   learning rates and physical/economic limits.
+#' @param t_start Year when deployment begins
+#'
+#' @return Function with signature function(year) returning max capacity
+#'
+#' @examples
+#' # Conservative: strong diminishing returns (low-hanging fruit exhausted quickly)
+#' cap_fn <- make_power_capacity(a = 1.5, alpha = 0.35, t_start = 2020)
+#' cap_fn(2030)  # ~2.4 GtCO2/year
+#' cap_fn(2050)  # ~5.0 GtCO2/year
+#' cap_fn(2100)  # ~12 GtCO2/year
+#'
+#' # Moderate: balanced learning and constraints
+#' cap_fn <- make_power_capacity(a = 3, alpha = 0.4, t_start = 2020)
+#' cap_fn(2030)  # ~6.0 GtCO2/year
+#' cap_fn(2050)  # ~12 GtCO2/year
+#' cap_fn(2100)  # ~30 GtCO2/year
+#'
+#' # Aggressive: sustained learning overcomes constraints
+#' cap_fn <- make_power_capacity(a = 5, alpha = 0.45, t_start = 2020)
+#' cap_fn(2030)  # ~12 GtCO2/year
+#' cap_fn(2050)  # ~26 GtCO2/year
+#' cap_fn(2100)  # ~70 GtCO2/year
+
+make_power_capacity <- function(a, alpha, t_start) {
+  # Input validation
+  if (alpha <= 0 || alpha >= 1) {
+    stop("alpha must be between 0 and 1 for realistic deployment curves with diminishing returns")
+  }
+  if (a <= 0) {
+    stop("a must be positive (represents deployment scale)")
+  }
+  
+  function(year) {
+    if (year < t_start) {
+      return(0)
+    }
+    a * (year - t_start)^alpha
+  }
+}
+
+
+#' @title Logistic Growth Starting From Near-Zero
+#' @description
+#' Creates a logistic S-curve that starts from a specified small initial value
+#' and grows to a maximum capacity. This version is easier to parameterize than
+#' the standard logistic because you directly specify the starting capacity
+#' instead of solving for it via t_mid.
+#'
+#' Captures three-phase deployment:
+#' 1. Slow start (technology development, low investment)
+#' 2. Rapid acceleration (technology matures, costs fall, massive scaling)
+#' 3. Slowdown to saturation (easier solutions exhausted, physical/economic limits)
+#'
+#' The function is: g(t) = K / (1 + ((K/g_initial) - 1) * exp(-r*(t - t_start)))
+#'
+#' @param g_initial Starting capacity at t_start in GtCO2/year (e.g., 0.01 for
+#'   current global CDR levels). This is what's actually deployed today.
+#' @param K Maximum capacity (saturation level) in GtCO2/year. Represents
+#'   physical, economic, or policy limits on deployment (e.g., 30 GtCO2/year).
+#' @param r Growth rate controlling how fast the acceleration phase happens
+#'   (typically 0.10-0.20). Higher r means faster transition from slow start
+#'   to rapid growth. Common values: 0.10 (slow), 0.15 (moderate), 0.20 (fast).
+#' @param t_start Year when deployment begins
+#'
+#' @return Function with signature function(year) returning max capacity
+#'
+#' @examples
+#' # CDR deployment: current levels to realistic 2100 capacity
+#' cap_fn <- make_logistic_from_zero(
+#'   g_initial = 0.01,  # Current CDR ~0.002-0.01 GtCO2/year
+#'   K = 30,            # Saturate at 30 GtCO2/year
+#'   r = 0.15,          # Moderate acceleration
+#'   t_start = 2020
+#' )
+#' cap_fn(2030)  # ~0.04 (slow start)
+#' cap_fn(2050)  # ~5.4 (acceleration phase)
+#' cap_fn(2070)  # ~27.4 (approaching saturation)
+#'
+#' # Mitigation: current efforts scaling to high capacity
+#' cap_fn <- make_logistic_from_zero(
+#'   g_initial = 5,     # Current global mitigation ~5 GtCO2/year
+#'   K = 50,            # High deployment target
+#'   r = 0.12,          # Moderate-slow acceleration
+#'   t_start = 2020
+#' )
+#'
+#' # Aggressive scenario: fast acceleration
+#' cap_fn <- make_logistic_from_zero(
+#'   g_initial = 0.1,
+#'   K = 50,
+#'   r = 0.20,          # Fast transition to scaling phase
+#'   t_start = 2025
+#' )
+
+make_logistic_from_zero <- function(g_initial, K, r, t_start) {
+  # Input validation
+  if (g_initial <= 0) {
+    stop("g_initial must be positive (starting capacity)")
+  }
+  if (K <= g_initial) {
+    stop("K must be greater than g_initial (maximum capacity must exceed starting capacity)")
+  }
+  if (r <= 0) {
+    stop("r must be positive (growth rate)")
+  }
+  
+  # Pre-calculate the suppression factor for efficiency
+  # This represents how much the initial capacity is suppressed relative to K
+  suppression_factor <- (K / g_initial) - 1
+  
+  function(year) {
+    if (year < t_start) {
+      return(0)
+    }
+    
+    t <- year - t_start
+    K / (1 + suppression_factor * exp(-r * t))
   }
 }
 

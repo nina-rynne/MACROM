@@ -121,8 +121,8 @@ plot_scenario_comparison_emissions <- function(scenario_results,
       y = expression("Cumulative emissions (GtCO"[2]*")")
     ) +
     scale_y_continuous(
-      breaks = seq(-800, 800, by = 200),  # Ticks every 200 units
-      limits = c(-800, 800),
+      breaks = seq(-800, 1800, by = 250),  # Ticks every 200 units
+      limits = c(-800, 1800),
       expand = expansion(mult = 0.02)  # Small padding
     ) +
     scenario_comparison_theme
@@ -169,7 +169,7 @@ plot_scenario_comparison_temperature <- function(scenario_results,
       name = "Scenario",
       values = scenario_colors[1:length(unique(plot_data$scenario_clean))]
     ) +
-    scale_y_continuous(limits = c(NA, 2)) +
+    scale_y_continuous(limits = c(NA, 2.8)) +
     labs(
       title = title,
       x = "Year",
