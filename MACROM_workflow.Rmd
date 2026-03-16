@@ -6,10 +6,6 @@ output: html_document
 date: "January 2026"
 ---
 
-```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
-```
-
 # ==============================================================================
 # MACROM: An Optimal Control Model for Balancing Climate Change 
 # Abatement and Damage Trade-offs
@@ -24,7 +20,7 @@ knitr::opts_chunk$set(echo = TRUE)
 #   Rynne, N., Bode, M., Roberts, M., & Heneghan, R. (2025). 
 #   MACROM: An Optimal Control Model for Balancing Climate Change 
 #   Abatement and Damage Trade-offs.
-#   [Full citation to be added upon publication]
+#   https://doi.org/10.31223/X5SB5W
 # 
 # Version: 1.0.0
 # Last updated: January 2026
@@ -40,6 +36,15 @@ knitr::opts_chunk$set(echo = TRUE)
 #
 # This is the primary user interface - public users interact only with this file.
 # For detailed instructions, prerequisites, and troubleshooting, see USER_GUIDE.md
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+# Create output directories if they don't exist
+dir.create(here::here("output"), showWarnings = FALSE)
+dir.create(here::here("figs"), showWarnings = FALSE)
+
+```
 
 ```{r libraries}
 
@@ -189,8 +194,7 @@ source(here::here("src", "optimal_control_core.R"))
 source(here::here("src", "scenario_comparison.R"))
 
 # USER CHOICE: Select which SSP scenarios to compare
-scenarios_to_compare <- c("SSP1-Baseline", "SSP2-Baseline", "SSP3-Baseline", 
-                          "SSP4-Baseline", "SSP5-Baseline")
+scenarios_to_compare <- c("SSP5-Baseline")
 
 # USER CHOICE: Delay settings (typically keep at 0 for baseline comparison)
 mitigation_delay <- 0  # Years before mitigation begins
@@ -468,6 +472,247 @@ comprehensive_cost_dashboard <- create_comprehensive_cost_delay_dashboard(
   height = 260
 )
 print(comprehensive_cost_dashboard)
+```
+
+```{r iso_scenario_comparison_analysis, eval=FALSE}
+# ==============================================================================
+# Scenario Comparison Analysis
+# ==============================================================================
+# Compare optimal control solutions across different SSP baseline scenarios
+#
+# REQUIREMENTS: Must use single parameter set (parameter_df with 1 row)
+# OUTPUTS: Saved automatically to output/ directory
+# RUNTIME: ~5-15 minutes for 5 scenarios with parallel processing
+#          ~longer when use_iso_remov = TRUE due to nested shooting loops
+
+# Source required functions
+source(here::here("src", "optimal_control_isoperimetric.R"))
+source(here::here("src", "isoperimetric_scenario_comparison.R"))
+
+# USER CHOICE: Select which SSP scenarios to compare
+scenarios_to_compare <- c("SSP3-Baseline", "SSP4-Baseline", "SSP5-Baseline")
+
+# USER CHOICE: Delay settings (typically keep at 0 for baseline comparison)
+mitigation_delay <- 0  # Years before mitigation begins
+cdr_delay        <- 0  # Years before CDR deployment begins
+
+# USER CHOICE: Isoperimetric inequality constraint on u_r
+# When use_iso_remov = TRUE, total CDR is constrained to <= iso_remov_target.
+# Scenarios where unconstrained CDR already falls below the target are
+# returned unchanged (constraint non-binding, lambda_iso_remov = 0).
+# Set use_iso_remov = FALSE to revert to standard unconstrained shooting.
+use_iso_remov    <- TRUE  # Set TRUE to activate upper bound on total CDR
+iso_remov_target <- 200   # Upper bound for integral of u_r in GtCO2
+                           # (e.g. 1000); only used when use_iso_remov = TRUE
+lambda_iso_bounds <- c(-1, 0)  # Bracket for outer secant search.
+                               # Upper bound is always 0 by KKT condition.
+                               # Only lambda_iso_bounds[1] matters: make it
+                               # negative enough to bracket the binding case.
+                               # Go more negative (e.g. c(-0.5, 0)) if the
+                               # target is well below the unconstrained CDR.
+
+# Run scenario comparison
+scenario_comparison_results <- run_scenario_comparison(
+  parameter_df           = parameter_df[1, ],    # Must be single row
+  emissions_df           = emissions_df,
+  economic_df            = economic_df,
+  scenarios              = scenarios_to_compare,
+  mitigation_delay_years = mitigation_delay,
+  cdr_delay_years        = cdr_delay,
+  use_iso_remov          = use_iso_remov,         # Isoperimetric constraint flag
+  iso_remov_target       = iso_remov_target,      # Target integral of u_r
+  lambda_iso_bounds      = lambda_iso_bounds,     # Outer secant search bounds
+  use_parallel           = TRUE,                  # Set FALSE if parallel issues occur
+  save_results           = TRUE,                  # Automatically saves to output/
+  verbose                = FALSE                  # Set TRUE for detailed progress
+)
+
+# Display summary
+if (!is.null(scenario_comparison_results$comparison_summary)) {
+  print(scenario_comparison_results$comparison_summary)
+}
+```
+
+```{r scenario_comparison_analysis_capacity, eval=FALSE}
+# ==============================================================================
+# Scenario Comparison Analysis with Capacity Constraints
+# ==============================================================================
+# Compare optimal control solutions across different SSP baseline scenarios
+# with realistic deployment constraints on both mitigation and CDR.
+#
+# REQUIREMENTS: Must use single parameter set (parameter_df with 1 row)
+# OUTPUTS: Saved automatically to output/ directory
+# RUNTIME: ~5-15 minutes for 5 scenarios with parallel processing
+
+# Source required functions
+source(here::here("src", "optimal_control_capacity.R"))
+source(here::here("src", "scenario_comparison_capacity.R"))
+source(here::here("src", "capacity_helpers.R"))
+
+# USER CHOICE: Select which SSP scenarios to compare
+scenarios_to_compare <- c("SSP1-Baseline", "SSP2-Baseline", "SSP3-Baseline", 
+                          "SSP4-Baseline", "SSP5-Baseline")
+
+# USER CHOICE: Delay settings (typically keep at 0 for baseline comparison)
+mitigation_delay <- 0  # Years before mitigation begins
+cdr_delay        <- 0  # Years before CDR deployment begins
+
+# ==============================================================================
+# USER CHOICE: Mitigation Capacity Constraint
+# ==============================================================================
+# Enforces realistic ramp-up limits on mitigation deployment. This prevents
+# unrealistic scenarios where mitigation jumps instantly to high levels.
+# Examples: early coal/gas phase-out constraints, infrastructure buildout limits,
+# political economy barriers to rapid emissions reductions.
+
+use_mitigation_capacity_limit <- TRUE  # Set TRUE to activate
+
+# Example 1: Exponential growth from current mitigation levels
+# mitigation_capacity_function <- make_exponential_capacity(
+#   u0 = 5,        # Start at 5 GtCO2/year (current global mitigation efforts)
+#   gamma = 0.03,  # Grow at 3% per year
+#   t_start = 2025
+# )
+
+# Example 2: Logistic S-curve (slow start, rapid middle, plateau)
+#  mitigation_capacity_function <- make_logistic_capacity(
+#   K = 60,        # Saturate at 40 GtCO2/year
+#   r = 0.06,      # Steepness of transition
+#   t_mid = 2045   # Midpoint of ramp-up
+# )
+
+# Example 3: Linear ramp with policy targets
+# mitigation_capacity_function <- make_linear_capacity(
+#   rho = 0.5,     # Add 0.5 GtCO2/year capacity each year
+#   K = 50,        # Cap at 50 GtCO2/year
+#   t_start = 2025
+# )
+
+# Example 4: Piecewise targets by decade (policy milestones)
+# mitigation_capacity_function <- make_piecewise_capacity(
+#   c("2025" = 5, "2030" = 10, "2040" = 20, "2050" = 35, "2070" = 45)
+# )
+ 
+# Moderate mitigation scaling
+mitigation_capacity_function <- make_power_capacity(
+  a = 0.0001,         # Moderate ambition
+  alpha = 0.0001,   # Balanced learning/constraints
+  t_start = 2020
+)
+
+# Mitigation scaling from current efforts
+# mitigation_capacity_function <- make_logistic_from_zero(
+#   g_initial = 5,     # Current ~5 GtCO2/year mitigation
+#   K = 50,            # High deployment scenario
+#   r = 0.03,          # Moderate growth
+#   t_start = 2025
+# )
+
+# ==============================================================================
+# USER CHOICE: CDR Capacity Constraint
+# ==============================================================================
+# Enforces realistic ramp-up limits on CDR deployment. This prevents unrealistic
+# spikes (e.g., 40 GtCO2/year immediately). CDR must start from near-zero and
+# grow based on technology learning, infrastructure, and investment.
+
+use_cdr_capacity_limit <- TRUE  # Set TRUE to activate
+
+# Example 1: Exponential growth from small base (realistic for new tech)
+# cdr_capacity_function <- make_exponential_capacity(
+#   u0 = 0.1,      # Start at 0.1 GtCO2/year (current CDR ~0.01)
+#   gamma = 0.05,  # Grow at 5% per year
+#   t_start = 2025
+# )
+
+# Example 2: Logistic S-curve (technology learning curve)
+# cdr_capacity_function <- make_logistic_capacity(
+#   K = 50,        # Saturate at 10 GtCO2/year (physical/economic limit)
+#   r = 0.03,      # Steepness
+#   t_mid = 2060   # Midpoint year
+# )
+
+# Example 3: Linear ramp (steady buildout)
+# cdr_capacity_function <- make_linear_capacity(
+#   rho = 0.2,     # Add 0.2 GtCO2/year capacity each year
+#   K = 15,        # Cap at 15 GtCO2/year
+#   t_start = 2030 # Start ramp in 2030
+# )
+
+# Example 4: Aggressive early deployment with plateau
+# cdr_capacity_function <- make_linear_capacity(
+#   rho = 0.5,     # Rapid initial buildout
+#   K = 20,        # High saturation
+#   t_start = 2025
+# )
+
+# Conservative CDR deployment
+# cdr_capacity_function <- make_power_capacity(
+#   a = 6,       # Low deployment ambition
+#   alpha = 0.35,  # Strong diminishing returns
+#   t_start = 2020
+# )
+
+# CDR with three-phase deployment
+cdr_capacity_function <- make_logistic_from_zero(
+  g_initial = 1,  # Current CDR levels
+  K = 100,            # Maximum realistic capacity
+  r = 0.05,          # Moderate acceleration
+  t_start = 2025
+)
+
+# ==============================================================================
+# Run scenario comparison with capacity constraints
+# ==============================================================================
+# Both mitigation and CDR constraints can be active simultaneously.
+# The solver will optimize within the feasible deployment space defined
+# by the capacity functions.
+
+scenario_comparison_results <- run_scenario_comparison(
+  parameter_df                   = parameter_df[1, ],    # Must be single row
+  emissions_df                   = emissions_df,
+  economic_df                    = economic_df,
+  scenarios                      = scenarios_to_compare,
+  mitigation_delay_years         = mitigation_delay,
+  cdr_delay_years                = cdr_delay,
+  use_mitigation_capacity_limit  = use_mitigation_capacity_limit,  # Mitigation constraint
+  mitigation_capacity_function   = mitigation_capacity_function,    # Mitigation capacity curve
+  use_cdr_capacity_limit         = use_cdr_capacity_limit,          # CDR constraint
+  cdr_capacity_function          = cdr_capacity_function,           # CDR capacity curve
+  use_parallel                   = TRUE,                            # Parallel processing
+  save_results                   = TRUE,                            # Save to output/
+  verbose                        = FALSE                            # Progress reporting
+)
+
+# Display summary
+if (!is.null(scenario_comparison_results$comparison_summary)) {
+  print(scenario_comparison_results$comparison_summary)
+}
+
+# ==============================================================================
+# Interpretation Notes
+# ==============================================================================
+# 
+# WHEN 1.5°C IS IMPOSSIBLE:
+# If capacity constraints make returning to 1.5°C impossible, the solver returns
+# the "best" result it can find - the solution that gets closest to the target
+# cumulative emissions. Check these fields to assess the result:
+#
+#   - final_temperature: Actual temperature achieved (may exceed 1.5°C)
+#   - emission_gap: How close to target emissions (GtCO2)
+#   - temperature_anomaly: Full time series showing overshoot trajectory
+#
+# CAPACITY BINDING INDICATORS:
+# To see if capacity constraints are actively limiting deployment:
+#
+#   - Plot qty_mitig vs mitigation_capacity_function(years)
+#   - Plot qty_remov vs cdr_capacity_function(years)
+#   - If they track closely, the constraint is binding
+#
+# OVERSHOOT DYNAMICS:
+# Capacity constraints typically force temporary temperature overshoot because
+# deployment can't scale fast enough to avoid it. The solver minimizes total
+# cost subject to the deployment constraints, which may mean accepting overshoot.
+#
 ```
 
 # ==============================================================================
