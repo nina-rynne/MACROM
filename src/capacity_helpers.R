@@ -274,3 +274,28 @@ make_piecewise_capacity <- function(breakpoints) {
     return(capacities[idx])
   }
 }
+
+#' @title Make Zero Capacity Function
+#' @description
+#' Returns a capacity function that evaluates to zero for all years. Used with
+#' use_mitigation_capacity_limit = TRUE to eliminate mitigation as a control
+#' entirely, forcing the optimiser to rely solely on CDR. This is the cleanest
+#' way to zero mitigation without modifying the solver code.
+#'
+#' @return Function with signature function(year) returning 0 for all inputs
+#'
+#' @examples
+#' # Create a zero-capacity function
+#' zero_fn <- make_zero_capacity()
+#' zero_fn(2025)  # Returns 0
+#' zero_fn(2060)  # Returns 0
+#'
+#' # Use in scenario comparison to eliminate mitigation
+#' results <- run_scenario_comparison(
+#'   ...,
+#'   use_mitigation_capacity_limit = TRUE,
+#'   mitigation_capacity_function  = make_zero_capacity()
+#' )
+make_zero_capacity <- function() {
+  function(year) 0
+}

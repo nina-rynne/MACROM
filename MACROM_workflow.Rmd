@@ -474,6 +474,160 @@ comprehensive_cost_dashboard <- create_comprehensive_cost_delay_dashboard(
 print(comprehensive_cost_dashboard)
 ```
 
+```{r cdr_scale_sensitivity_analysis, eval=FALSE}
+# ==============================================================================
+# CDR Scale Sensitivity Analysis
+# ==============================================================================
+# Sweeps the CDR logistic scale function parameters K (carrying capacity,
+# GtCO2/year) and r (growth rate) across a user-defined grid and runs the
+# full scenario comparison for each combination. Mitigation is zeroed out so
+# that CDR is the sole control, isolating the effect of CDR scale parameters.
+#
+# REQUIREMENTS: Must use single parameter set (parameter_df with 1 row)
+# OUTPUTS: Saved automatically to output/ directory
+# RUNTIME: Scales with n_K × n_r × n_scenarios. A 10 × 10 grid across 5
+#          scenarios (~500 solver runs) takes approximately 30-90 minutes
+#          depending on hardware and parallel core count.
+
+# Source required functions
+source(here::here("src", "optimal_control_capacity.R"))
+source(here::here("src", "scenario_comparison_capacity.R"))
+source(here::here("src", "capacity_helpers.R"))
+source(here::here("src", "cdr_scale_sensitivity.R"))
+
+# ==============================================================================
+# USER CHOICE: CDR K range (carrying capacity, GtCO2/year)
+# ==============================================================================
+K_min <- 20     # Minimum CDR carrying capacity (GtCO2/year)
+K_max <- 300    # Maximum CDR carrying capacity (GtCO2/year)
+n_K   <- 20     # Number of K values to test
+
+# ==============================================================================
+# USER CHOICE: CDR r range (growth rate)
+# ==============================================================================
+r_min       <- 0.01    # Minimum CDR growth rate
+r_max       <- 0.50    # Maximum CDR growth rate
+n_r         <- 10      # Number of r values to test
+r_log_scale <- FALSE   # Set TRUE for log-spaced r values (useful if r spans
+                       # more than one order of magnitude)
+
+# ==============================================================================
+# USER CHOICE: Fixed CDR function settings (single values, not swept)
+# ==============================================================================
+g_initial <- 1      # Starting CDR deployment level (GtCO2/year)
+t_start   <- 2025   # Year CDR deployment begins
+
+# ==============================================================================
+# USER CHOICE: Scenarios to analyse
+# ==============================================================================
+scenarios_to_compare <- c("SSP1-Baseline", "SSP2-Baseline", "SSP3-Baseline",
+                          "SSP4-Baseline", "SSP5-Baseline")
+
+# ==============================================================================
+# Zero out mitigation (CDR is the sole control in this analysis)
+# ==============================================================================
+# make_zero_capacity() returns a capacity function that evaluates to 0 for all
+# years. Combined with use_mitigation_capacity_limit = TRUE this forces
+# qty_mitig = 0 throughout the optimisation without modifying the solver.
+use_mitigation_capacity_limit <- TRUE
+mitigation_capacity_function  <- make_zero_capacity()
+
+# ==============================================================================
+# Build parameter grid and run sweep
+# ==============================================================================
+cdr_scale_grid <- build_cdr_scale_grid(
+  K_min       = K_min,
+  K_max       = K_max,
+  n_K         = n_K,
+  r_min       = r_min,
+  r_max       = r_max,
+  n_r         = n_r,
+  r_log_scale = r_log_scale
+)
+
+cdr_scale_sensitivity_results <- run_cdr_scale_sensitivity(
+  parameter_df                  = parameter_df[1, ],
+  emissions_df                  = emissions_df,
+  economic_df                   = economic_df,
+  scenarios                     = scenarios_to_compare,
+  cdr_grid                      = cdr_scale_grid,
+  g_initial                     = g_initial,
+  t_start                       = t_start,
+  mitigation_delay_years        = 20,
+  cdr_delay_years               = 20,
+  use_mitigation_capacity_limit = use_mitigation_capacity_limit,
+  mitigation_capacity_function  = mitigation_capacity_function,
+  use_parallel                  = TRUE,
+  save_results                  = TRUE,
+  verbose                       = TRUE
+)
+
+# Display summary
+cat("\n=== CDR SCALE SENSITIVITY ANALYSIS COMPLETE ===\n")
+cat("Grid:       ", nrow(cdr_scale_grid), "combinations\n")
+cat("Scenarios:  ", length(scenarios_to_compare), "\n")
+cat("Total runs: ", nrow(cdr_scale_grid) * length(scenarios_to_compare), "\n")
+cat("Feasible:   ", cdr_scale_sensitivity_results$summary_stats$n_feasible, "/",
+    cdr_scale_sensitivity_results$summary_stats$n_total_rows, "\n")
+
+```
+
+
+```{r cdr_scale_sensitivity_visualisation, eval=FALSE}
+
+# TO DO
+# fix scale range for years over 1.5, since it can vary so dramatically depending on delays
+
+
+# ==============================================================================
+# CDR Scale Sensitivity Visualisation
+# ==============================================================================
+# Create heatmap dashboards showing how CDR carrying capacity (K) and growth
+# rate (r) affect climate outcomes across all SSP scenarios.
+# OUTPUTS: Saved automatically to figs/ directory
+
+# Source visualisation functions
+source(here::here("src", "cdr_scale_sensitivity_visualisation.R"))
+
+# Check results exist
+if (!exists("cdr_scale_sensitivity_results")) {
+  stop("CDR scale sensitivity results not found. ",
+       "Please run the cdr_scale_sensitivity_analysis chunk first.")
+}
+
+# Optional: add abatement cost column if cost visualisation is needed
+# (mirrors the delayed_deployment_visualisation chunk convention)
+# cdr_scale_sensitivity_results$combined_results <-
+#   cdr_scale_sensitivity_results$combined_results %>%
+#   mutate(abatement_cost = mitig_cost + remov_cost)
+
+# ==============================================================================
+# USER CHOICE: Variables to plot
+# ==============================================================================
+# Temperature outcomes (primary analysis):
+#   c("peak_temperature", "years_above_1p5")
+# Cost outcomes (requires abatement_cost column above):
+#   c("total_cost", "abatement_cost", "temp_cost")
+
+# Create temperature dashboard
+cdr_scale_dashboard <- create_cdr_scale_temperature_dashboards(
+  sensitivity_results = cdr_scale_sensitivity_results,
+  contour_alpha       = 0.6,
+  show_infeasible     = FALSE,
+  width               = 297,
+  height              = 210,
+  verbose             = TRUE
+)
+
+# Display the dashboard
+print(cdr_scale_dashboard)
+```
+
+
+
+
+
+
 ```{r scenario_comparison_analysis_capacity, eval=FALSE}
 # ==============================================================================
 # Scenario Comparison Analysis with Capacity Constraints
