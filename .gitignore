@@ -6,4 +6,8 @@ README.html
 /figs
 /output
 /optimal_control_project
-
+/src/isoperimetric_scenario_comparison.R
+/src/optimal_control_isoperimetric.R
+/src/optimal_control_capacity.R
+/src/scenario_comparison_capacity.R
+/src/capacity_helpers.R
