@@ -472,6 +472,12 @@ comprehensive_cost_dashboard <- create_comprehensive_cost_delay_dashboard(
 print(comprehensive_cost_dashboard)
 ```
 
+# ==============================================================================
+# Current working section
+# ==============================================================================
+
+
+
 ```{r cdr_scale_sensitivity_analysis, eval=FALSE}
 # ==============================================================================
 # CDR Scale Sensitivity Analysis
@@ -496,23 +502,23 @@ source(here::here("src", "cdr_scale_sensitivity.R"))
 # ==============================================================================
 # USER CHOICE: CDR K range (carrying capacity, GtCO2/year)
 # ==============================================================================
-K_min <- 20     # Minimum CDR carrying capacity (GtCO2/year)
-K_max <- 300    # Maximum CDR carrying capacity (GtCO2/year)
-n_K   <- 20     # Number of K values to test
+K_min <- 25     # Minimum CDR carrying capacity (GtCO2/year)
+K_max <- 200    # Maximum CDR carrying capacity (GtCO2/year)
+n_K   <- 50     # Number of K values to test
 
 # ==============================================================================
 # USER CHOICE: CDR r range (growth rate)
 # ==============================================================================
-r_min       <- 0.01    # Minimum CDR growth rate
-r_max       <- 0.50    # Maximum CDR growth rate
-n_r         <- 10      # Number of r values to test
+r_min       <- 0.02    # Minimum CDR growth rate
+r_max       <- 0.20    # Maximum CDR growth rate
+n_r         <- 50      # Number of r values to test
 r_log_scale <- FALSE   # Set TRUE for log-spaced r values (useful if r spans
                        # more than one order of magnitude)
 
 # ==============================================================================
 # USER CHOICE: Fixed CDR function settings (single values, not swept)
 # ==============================================================================
-g_initial <- 1      # Starting CDR deployment level (GtCO2/year)
+g_initial <- 2      # Starting CDR deployment level (GtCO2/year)
 t_start   <- 2025   # Year CDR deployment begins
 
 # ==============================================================================
@@ -573,10 +579,6 @@ cat("Feasible:   ", cdr_scale_sensitivity_results$summary_stats$n_feasible, "/",
 
 ```{r cdr_scale_sensitivity_visualisation, eval=FALSE}
 
-# TO DO
-# fix scale range for years over 1.5, since it can vary so dramatically depending on delays
-
-
 # ==============================================================================
 # CDR Scale Sensitivity Visualisation
 # ==============================================================================
@@ -608,18 +610,49 @@ if (!exists("cdr_scale_sensitivity_results")) {
 #   c("total_cost", "abatement_cost", "temp_cost")
 
 # Create temperature dashboard
-cdr_scale_dashboard <- create_cdr_scale_temperature_dashboards(
+cdr_scale_dashboards <- create_cdr_scale_temperature_dashboards(
+  sensitivity_results   = cdr_scale_sensitivity_results,
+  add_contours          = FALSE,
+  add_threshold_line    = TRUE,
+  threshold_value_temp  = 1.5,   # can omit — this is the default
+  threshold_value_years = 0.5,   # can omit — this is the default
+  show_infeasible       = FALSE,
+  width                 = 297,
+  height                = 210,
+  verbose               = TRUE
+)
+
+
+cdr_threshold_plot <- create_cdr_scale_threshold_plot(
+  sensitivity_results   = cdr_scale_sensitivity_results,
+  threshold_value_temp  = 1.5,
+  threshold_value_years = 0.5,
+  save_plot             = TRUE,
+  width                 = 190,
+  height                = 100,
+  verbose               = TRUE
+)
+
+cdr_outcome_plot <- create_cdr_scale_outcome_plot(
   sensitivity_results = cdr_scale_sensitivity_results,
-  contour_alpha       = 0.6,
-  show_infeasible     = FALSE,
+  threshold           = 1.5,
+  alpha_recoverable   = 0.35,
+  alpha_unrecoverable = 0.85,
+  save_plot           = TRUE,
   width               = 297,
-  height              = 210,
+  height              = 100,
   verbose             = TRUE
 )
 
 # Display the dashboard
-print(cdr_scale_dashboard)
+print(cdr_scale_dashboards)
 ```
+
+
+
+# ==============================================================================
+# Current section end
+# ==============================================================================
 
 
 
@@ -729,8 +762,6 @@ if (!is.null(scenario_comparison_results$comparison_summary)) {
 # cost subject to the deployment constraints, which may mean accepting overshoot.
 #
 ```
-
-
 
 ```{r multi_scenario_comparison_analysis_capacity, eval=FALSE}
 # ==============================================================================
@@ -908,8 +939,6 @@ csv_filename <- paste0("capacity_summary_", format(Sys.time(), "%Y%m%d_%H%M%S"),
 write.csv(capacity_summary_df, here::here("output", csv_filename), row.names = FALSE)
 
 ```
-
-
 
 ```{r scenario_comparison_visualisation_capacity, eval=FALSE}
 # ==============================================================================

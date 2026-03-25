@@ -22,8 +22,14 @@
 # requested outcome variable. Structured to mirror delayed_deployment_visualisation.R
 # and accepts output from run_cdr_scale_sensitivity() in cdr_scale_sensitivity.R.
 # 
-# Version: 1.1.0
+# Version: 1.2.0
 # Last updated: March 2026
+#
+# Changes in v1.2.0:
+#   - create_cdr_scale_temperature_dashboards() gains add_contours parameter,
+#     allowing contour lines to be toggled on/off from the notebook chunk
+#   - Auto-generated filenames now include the variable label ("peak_temp" or
+#     "years_above_1p5") so each saved PDF is clearly identifiable
 #
 # Fixes in v1.1.0:
 #   - face = "bold" replaces fontface = "bold" in element_text() (Bug 1)
@@ -530,8 +536,8 @@ calculate_cdr_scale_gradients <- function(data,
 #' @param show_title Logical: show scenario name as panel title (default: TRUE)
 #' @param show_x_label Logical: show x-axis label (default: TRUE)
 #' @param show_y_label Logical: show y-axis label (default: TRUE)
-#' @param x_label Character string for x-axis
-#' @param y_label Character string for y-axis
+#' @param x_label x-axis label (default: "Maximum capacity (GtCO2/year)" with subscript)
+#' @param y_label y-axis label (default: "Maximum growth rate (%)")
 #' @param title_text Optional override for panel title text
 #' @param theme_object ggplot2 theme from get_cdr_scale_theme()
 #' @return ggplot object
@@ -544,8 +550,8 @@ create_cdr_scale_base_heatmap <- function(scenario_data,
                                           show_title   = TRUE,
                                           show_x_label = TRUE,
                                           show_y_label = TRUE,
-                                          x_label      = "K (GtCO\u2082/year)",
-                                          y_label      = "r",
+                                          x_label      = expression("Maximum capacity (GtCO"[2]*"/year)"),
+                                          y_label      = "Maximum growth rate (%)",
                                           title_text   = NULL,
                                           theme_object = get_cdr_scale_theme()) {
   
@@ -576,6 +582,7 @@ create_cdr_scale_base_heatmap <- function(scenario_data,
       oob       = scales::squish,
       labels    = scales::comma
     ) +
+    scale_y_continuous(breaks = seq(0.02, 0.30, by = 0.02)) +
     labs(
       title = plot_title,
       x     = x_axis_label,
@@ -639,6 +646,58 @@ add_cdr_scale_contours <- function(plot_object,
         inherit.aes = FALSE
       )
   }
+}
+
+
+#' @title Add Single Threshold Line to CDR Scale Heatmap
+#' @description
+#' Draws a single contour line at a specified threshold value. Intended for
+#' marking a meaningful boundary (e.g. 1.5°C on a peak temperature heatmap).
+#' Kept separate from add_cdr_scale_contours() so it can be toggled
+#' independently of the multi-line contour layer.
+#'
+#' @param plot_object ggplot object to add the line to
+#' @param scenario_data Data frame for the scenario
+#' @param variable Character string: variable for contour z-values
+#' @param threshold_value Single numeric threshold value (default: 1.5)
+#' @param line_color Colour of the threshold line (default: "red")
+#' @param line_alpha Transparency 0-1 (default: 0.9)
+#' @param line_width Line width in mm (default: 0.6)
+#' @return ggplot object with threshold line added
+add_cdr_scale_threshold_line <- function(plot_object,
+                                         scenario_data,
+                                         variable,
+                                         threshold_value = 1.5,
+                                         line_color      = "red",
+                                         line_alpha      = 0.9,
+                                         line_width      = 0.6) {
+  
+  if (!inherits(plot_object, "gg")) stop("plot_object must be a ggplot object")
+  if (!is.data.frame(scenario_data) || nrow(scenario_data) == 0) {
+    stop("scenario_data must be a non-empty data frame")
+  }
+  if (!variable %in% names(scenario_data)) {
+    stop("Variable '", variable, "' not found in scenario_data")
+  }
+  if (!is.numeric(threshold_value) || length(threshold_value) != 1) {
+    stop("threshold_value must be a single numeric value")
+  }
+  
+  var_range <- range(scenario_data[[variable]], na.rm = TRUE)
+  if (threshold_value < var_range[1] || threshold_value > var_range[2]) {
+    return(plot_object)  # threshold outside data range — skip silently
+  }
+  
+  plot_object +
+    geom_contour(
+      data        = scenario_data,
+      aes(x = K, y = r, z = .data[[variable]]),
+      breaks      = threshold_value,
+      color       = line_color,
+      alpha       = line_alpha,
+      linewidth   = line_width,
+      inherit.aes = FALSE
+    )
 }
 
 
@@ -751,6 +810,391 @@ extract_cdr_scale_legend <- function(plot_object, legend_position = "right") {
 }
 
 
+#' @title Create CDR Scale Threshold Boundary Plot
+#' @description
+#' Creates a two-panel line plot showing the K/r boundary at which a climate
+#' threshold is crossed, with one line per SSP scenario. The left panel shows
+#' the peak temperature threshold (default 1.5°C) and the right panel shows the
+#' years-above-1.5 threshold (default 0.5, tracing the first-year-of-overshoot
+#' boundary). Both panels share the same x and y axes as the heatmaps.
+#' Each line is extracted from the data using geom_contour's stat_contour
+#' internals via isoband, providing exact boundary coordinates.
+#'
+#' @param sensitivity_results Results object from run_cdr_scale_sensitivity()
+#' @param threshold_value_temp Threshold for peak_temperature panel (default: 1.5)
+#' @param threshold_value_years Threshold for years_above_1p5 panel (default: 0.5)
+#' @param ssp_colors Named character vector mapping scenario_short to hex colour.
+#'   Default uses the project-standard colorblind-friendly palette.
+#' @param line_width Line width in mm (default: 0.8)
+#' @param save_plot Logical: save to file (default: FALSE)
+#' @param filename Character string for output filename (default: NULL for auto)
+#' @param width Numeric width in mm (default: 180)
+#' @param height Numeric height in mm (default: 100)
+#' @param verbose Logical: print progress messages (default: TRUE)
+#' @return Patchwork two-panel plot object
+create_cdr_scale_threshold_plot <- function(sensitivity_results,
+                                            threshold_value_temp  = 1.5,
+                                            threshold_value_years = 0.5,
+                                            ssp_colors            = c(
+                                              SSP1 = "#00ADCF",
+                                              SSP2 = "#173C66",
+                                              SSP3 = "#F0E442",
+                                              SSP4 = "#E71D25",
+                                              SSP5 = "#951B1E"
+                                            ),
+                                            line_width            = 0.8,
+                                            save_plot             = FALSE,
+                                            filename              = NULL,
+                                            width                 = 190,
+                                            height                = 120,
+                                            verbose               = TRUE) {
+  
+  if (verbose) cat("Preparing data for threshold boundary plot...\n")
+  
+  plot_data <- prepare_cdr_scale_data(
+    sensitivity_results = sensitivity_results,
+    variables           = c("peak_temperature", "years_above_1p5"),
+    verbose             = verbose
+  )
+  
+  scenarios_present <- intersect(SSP_SCENARIO_ORDER_SCALE,
+                                 unique(plot_data$scenario_short))
+  colors_present    <- ssp_colors[scenarios_present]
+  
+  shared_theme <- BASE_CDR_SCALE_THEME +
+    theme(
+      text            = element_text(size = 10),
+      plot.title      = element_text(size = 10, hjust = 0.5),
+      axis.title      = element_text(size = 9),
+      axis.text       = element_text(size = 8),
+      legend.title    = element_text(size = 8),
+      legend.text     = element_text(size = 7),
+      legend.position = "none"
+    )
+  
+  # Helper: build one threshold boundary panel
+  make_threshold_panel <- function(variable, threshold_value, title_text) {
+    
+    var_range <- range(plot_data[[variable]], na.rm = TRUE)
+    
+    # Silently return an empty panel if threshold is outside data range
+    if (threshold_value <= var_range[1] || threshold_value >= var_range[2]) {
+      if (verbose) cat(sprintf("  %s: threshold %.2f outside data range [%.2f, %.2f] — empty panel\n",
+                               variable, threshold_value, var_range[1], var_range[2]))
+      return(
+        ggplot() +
+          annotate("text", x = 0.5, y = 0.5,
+                   label = "Threshold outside\ndata range",
+                   size = 3, colour = "grey50") +
+          labs(title = title_text,
+               x = expression("Maximum capacity (GtCO"[2]*"/year)"),
+               y = "Maximum growth rate (%)") +
+          shared_theme
+      )
+    }
+    
+    p <- ggplot() +
+      labs(
+        title = title_text,
+        x     = expression("Maximum capacity (GtCO"[2]*"/year)"),
+        y     = "Maximum growth rate (%)"
+      ) +
+      scale_color_manual(
+        name   = "Scenario",
+        values = colors_present,
+        breaks = scenarios_present
+      ) +
+      shared_theme +
+      theme(legend.position = "none")
+    
+    for (scen in scenarios_present) {
+      scen_data <- plot_data %>% filter(scenario_short == scen)
+      
+      scen_range <- range(scen_data[[variable]], na.rm = TRUE)
+      if (threshold_value <= scen_range[1] || threshold_value >= scen_range[2]) {
+        if (verbose) cat(sprintf("  %s / %s: threshold outside range — line skipped\n",
+                                 variable, scen))
+        next
+      }
+      
+      p <- p +
+        geom_contour(
+          data        = scen_data,
+          aes(x       = K,
+              y       = r,
+              z       = .data[[variable]],
+              colour  = scenario_short),
+          breaks      = threshold_value,
+          linewidth   = line_width,
+          inherit.aes = FALSE
+        )
+    }
+    
+    p
+  }
+  
+  # Compute axis limits from the data to match heatmap extents
+  k_range <- range(plot_data$K, na.rm = TRUE)
+  r_range <- range(plot_data$r, na.rm = TRUE)
+  
+  if (verbose) cat("Building peak temperature panel...\n")
+  panel_temp <- make_threshold_panel(
+    variable        = "peak_temperature",
+    threshold_value = threshold_value_temp,
+    title_text      = "Peak Temperature"
+  ) +
+    labs(tag = "a)") +
+    scale_x_continuous(limits = k_range) +
+    scale_y_continuous(breaks = seq(0.02, 0.30, by = 0.04),
+                       limits = r_range) +
+    theme(plot.tag = element_text(size = 10, face = "bold", hjust = 0))
+  
+  if (verbose) cat("Building years above 1.5\u00b0C panel...\n")
+  panel_years <- make_threshold_panel(
+    variable        = "years_above_1p5",
+    threshold_value = threshold_value_years,
+    title_text      = "Overshoot Duration"
+  ) +
+    labs(tag = "b)", y = NULL) +
+    scale_x_continuous(limits = k_range) +
+    scale_y_continuous(breaks = seq(0.02, 0.30, by = 0.04),
+                       limits = r_range) +
+    theme(
+      plot.tag      = element_text(size = 10, face = "bold", hjust = 0),
+      axis.title.y  = element_blank(),
+      axis.text.y   = element_blank(),
+      axis.ticks.y  = element_blank()
+    )
+  
+  # Build shared legend from a dummy plot
+  legend_plot <- ggplot(
+    data = data.frame(
+      x        = 1,
+      y        = 1,
+      scenario = factor(scenarios_present, levels = scenarios_present)
+    ),
+    aes(x = x, y = y, colour = scenario)
+  ) +
+    geom_line(linewidth = line_width) +
+    scale_color_manual(name = "Scenario", values = colors_present) +
+    shared_theme +
+    theme(
+      legend.position  = "right",
+      legend.title     = element_text(size = 8),
+      legend.text      = element_text(size = 7),
+      legend.key.width = unit(0.8, "cm")
+    )
+  
+  legend_grob <- cowplot::get_legend(legend_plot)
+  
+  combined <- (panel_temp | panel_years | patchwork::wrap_elements(legend_grob)) +
+    patchwork::plot_layout(widths = c(1, 1, 0.25))
+  
+  if (verbose) cat("Threshold boundary plot assembled\n")
+  
+  if (save_plot) {
+    if (is.null(filename)) {
+      filename <- paste0("cdr_scale_threshold_boundary_",
+                         format(Sys.time(), "%Y%m%d_%H%M%S"), ".pdf")
+    }
+    if (!grepl("\\.pdf$", filename, ignore.case = TRUE)) {
+      filename <- paste0(filename, ".pdf")
+    }
+    filepath        <- here::here("figs", filename)
+    output_dir_full <- here::here("figs")
+    if (!dir.exists(output_dir_full)) dir.create(output_dir_full, recursive = TRUE)
+    ggsave(filename = filepath, plot = combined,
+           width = width, height = height, units = "mm",
+           device = cairo_pdf, dpi = 300)
+    if (verbose) cat(sprintf("Saved to: %s\n", filepath))
+    return(invisible(combined))
+  }
+  
+  return(combined)
+}
+
+
+#' @title Create CDR Scale Climate Outcome Classification Plot
+#' @description
+#' Classifies every K/r grid cell into one of three climate outcome categories
+#' based on peak and final temperature thresholds, then plots a five-panel
+#' figure (one panel per SSP scenario) using shaded tiles. The three categories
+#' are:
+#'   - No overshoot: peak_temperature < threshold (no fill)
+#'   - Recoverable overshoot: peak_temperature >= threshold but
+#'     final_temperature < threshold (low-opacity fill)
+#'   - Unrecoverable overshoot: final_temperature >= threshold
+#'     (high-opacity fill)
+#' Each scenario uses its own SSP colour for shading, with opacity distinguishing
+#' the two overshoot categories.
+#'
+#' @param sensitivity_results Results object from run_cdr_scale_sensitivity()
+#' @param threshold Temperature threshold in °C (default: 1.5)
+#' @param ssp_colors Named character vector mapping scenario_short to hex colour.
+#'   Default uses the project-standard colorblind-friendly palette.
+#' @param alpha_recoverable Opacity for recoverable overshoot fill (default: 0.35)
+#' @param alpha_unrecoverable Opacity for unrecoverable overshoot fill (default: 0.85)
+#' @param save_plot Logical: save to file (default: FALSE)
+#' @param filename Character string for output filename (default: NULL for auto)
+#' @param width Numeric width in mm (default: 297)
+#' @param height Numeric height in mm (default: 100)
+#' @param verbose Logical: print progress messages (default: TRUE)
+#' @return Patchwork five-panel plot object
+create_cdr_scale_outcome_plot <- function(sensitivity_results,
+                                          threshold              = 1.5,
+                                          ssp_colors             = c(
+                                            SSP1 = "#00ADCF",
+                                            SSP2 = "#173C66",
+                                            SSP3 = "#F0E442",
+                                            SSP4 = "#E71D25",
+                                            SSP5 = "#951B1E"
+                                          ),
+                                          alpha_recoverable      = 0.35,
+                                          alpha_unrecoverable    = 0.85,
+                                          save_plot              = FALSE,
+                                          filename               = NULL,
+                                          width                  = 297,
+                                          height                 = 100,
+                                          verbose                = TRUE) {
+  
+  if (verbose) cat("Preparing data for outcome classification plot...\n")
+  
+  plot_data <- prepare_cdr_scale_data(
+    sensitivity_results = sensitivity_results,
+    variables           = c("peak_temperature", "final_temperature"),
+    verbose             = verbose
+  )
+  
+  # Classify each cell into one of three outcome categories
+  plot_data <- plot_data %>%
+    mutate(
+      outcome = case_when(
+        peak_temperature <  threshold                                    ~ "no_overshoot",
+        peak_temperature >= threshold & final_temperature < threshold    ~ "recoverable",
+        final_temperature >= threshold                                   ~ "unrecoverable",
+        TRUE                                                             ~ NA_character_
+      ),
+      outcome = factor(outcome,
+                       levels = c("no_overshoot", "recoverable", "unrecoverable"))
+    )
+  
+  if (verbose) {
+    counts <- table(plot_data$outcome, useNA = "ifany")
+    cat("Outcome classification counts:\n")
+    print(counts)
+  }
+  
+  scenarios_present <- intersect(SSP_SCENARIO_ORDER_SCALE,
+                                 unique(plot_data$scenario_short))
+  
+  panel_labels <- LETTERS
+  
+  shared_theme <- BASE_CDR_SCALE_THEME +
+    theme(
+      text         = element_text(size = 9),
+      plot.title   = element_text(size = 9, hjust = 0.5),
+      axis.title   = element_text(size = 8),
+      axis.text    = element_text(size = 7),
+      legend.position = "none",
+      plot.margin  = margin(1, 3, 1, 3)
+    )
+  
+  panels <- list()
+  
+  for (s_idx in seq_along(scenarios_present)) {
+    
+    scen        <- scenarios_present[s_idx]
+    scen_data   <- plot_data %>% filter(scenario_short == scen)
+    scen_colour <- unname(ssp_colors[scen])
+    panel_label <- panel_labels[s_idx]
+    
+    show_y      <- (s_idx == 1)
+    
+    fill_values <- c(
+      no_overshoot  = "white",
+      recoverable   = scales::alpha(scen_colour, alpha_recoverable),
+      unrecoverable = scales::alpha(scen_colour, alpha_unrecoverable)
+    )
+    
+    p <- ggplot(scen_data, aes(x = K, y = r, fill = outcome)) +
+      geom_tile() +
+      scale_fill_manual(
+        name   = "Outcome",
+        values = fill_values,
+        labels = c(
+          no_overshoot  = "No overshoot",
+          recoverable   = "Recoverable overshoot",
+          unrecoverable = "Unrecoverable overshoot"
+        ),
+        na.value = "grey90",
+        guide = guide_legend(
+          override.aes = list(
+            fill   = c("white",
+                       scales::alpha("#666666", alpha_recoverable),
+                       scales::alpha("#666666", alpha_unrecoverable)),
+            colour = c("black", NA, NA)
+          )
+        )
+      ) +
+      scale_y_continuous(breaks = seq(0.02, 0.30, by = 0.04)) +
+      labs(
+        title = scen,
+        x     = expression("Maximum capacity (GtCO"[2]*"/year)"),
+        y     = if (show_y) "Maximum growth rate (%)" else NULL,
+        tag   = paste0(panel_label, ")")
+      ) +
+      shared_theme +
+      theme(
+        plot.tag     = element_text(size = 9, face = "bold", hjust = 0),
+        axis.title.y = if (show_y) element_text(size = 8) else element_blank(),
+        axis.text.y  = if (show_y) element_text(size = 7) else element_blank(),
+        axis.ticks.y = if (show_y) element_line() else element_blank()
+      )
+    
+    panels[[scen]] <- p
+    
+    if (verbose) cat(sprintf("  Panel %s (%s) complete\n", panel_label, scen))
+  }
+  
+  # Assemble five panels — collect legends via patchwork so one shared legend
+  # appears at the bottom. Each panel must have legend.position set (not "none")
+  # for guides = "collect" to work, so we override shared_theme's "none" here.
+  panel_row <- patchwork::wrap_plots(panels, nrow = 1) &
+    theme(
+      legend.position  = "bottom",
+      legend.direction = "horizontal",
+      legend.title     = element_text(size = 8),
+      legend.text      = element_text(size = 7),
+      legend.key       = element_rect(colour = "grey70", fill = NA),
+      legend.key.size  = unit(0.4, "cm")
+    )
+  combined <- panel_row +
+    patchwork::plot_layout(guides = "collect")
+  
+  if (verbose) cat("Outcome classification plot assembled\n")
+  
+  if (save_plot) {
+    if (is.null(filename)) {
+      filename <- paste0("cdr_scale_outcome_classification_",
+                         format(Sys.time(), "%Y%m%d_%H%M%S"), ".pdf")
+    }
+    if (!grepl("\\.pdf$", filename, ignore.case = TRUE)) {
+      filename <- paste0(filename, ".pdf")
+    }
+    filepath        <- here::here("figs", filename)
+    output_dir_full <- here::here("figs")
+    if (!dir.exists(output_dir_full)) dir.create(output_dir_full, recursive = TRUE)
+    ggsave(filename = filepath, plot = combined,
+           width = width, height = height, units = "mm",
+           device = cairo_pdf, dpi = 300)
+    if (verbose) cat(sprintf("Saved to: %s\n", filepath))
+    return(invisible(combined))
+  }
+  
+  return(combined)
+}
+
+
 # ==============================================================================
 # Section 4: Plot Grid and Dashboard Assembly
 # ==============================================================================
@@ -768,6 +1212,11 @@ extract_cdr_scale_legend <- function(plot_object, legend_position = "right") {
 #' @param add_contours Logical: add contour lines (default: TRUE)
 #' @param contour_breaks Either "auto" or named list of breaks per variable
 #' @param contour_alpha Transparency of contours (default: 0.6)
+#' @param add_threshold_line Logical: draw a single threshold line (default: FALSE)
+#' @param threshold_value Single numeric value for the threshold line (default: 1.5).
+#'   Only drawn on variables whose data range contains this value.
+#' @param threshold_variable Character string: variable to draw the threshold line
+#'   on. Default "peak_temperature". Line is skipped for all other variables.
 #' @param add_arrows Logical: add gradient arrow field (default: FALSE)
 #' @param arrow_scale Numeric arrow scaling factor (default: 3.0)
 #' @param arrow_skip Integer for arrow thinning (default: 1)
@@ -784,10 +1233,13 @@ create_cdr_scale_plot_grid <- function(data,
                                        variable_limits,
                                        palette_info,
                                        variable_labels,
-                                       add_contours    = TRUE,
-                                       contour_breaks  = "auto",
-                                       contour_alpha   = 0.6,
-                                       add_arrows      = FALSE,
+                                       add_contours        = TRUE,
+                                       contour_breaks      = "auto",
+                                       contour_alpha       = 0.6,
+                                       add_threshold_line  = FALSE,
+                                       threshold_value     = 1.5,
+                                       threshold_variable  = "peak_temperature",
+                                       add_arrows          = FALSE,
                                        arrow_scale     = 3.0,
                                        arrow_skip      = 1,
                                        min_magnitude   = 0,
@@ -898,6 +1350,16 @@ create_cdr_scale_plot_grid <- function(data,
                         panel_label))
           }
         }
+      }
+      
+      # Add threshold line (single value, independent of contour layer)
+      if (add_threshold_line && variable == threshold_variable) {
+        p <- add_cdr_scale_threshold_line(
+          plot_object     = p,
+          scenario_data   = scenario_data,
+          variable        = variable,
+          threshold_value = threshold_value
+        )
       }
       
       # Add gradient arrows
@@ -1096,6 +1558,9 @@ save_cdr_scale_dashboard <- function(plot_object,
 #' @param add_contours Logical: add contour lines (default: TRUE)
 #' @param contour_breaks Either "auto" or named list of numeric vectors per variable
 #' @param contour_alpha Transparency of contours (default: 0.6)
+#' @param add_threshold_line Logical: draw a single threshold line (default: FALSE)
+#' @param threshold_value Single numeric threshold value (default: 1.5)
+#' @param threshold_variable Variable to draw the threshold line on (default: "peak_temperature")
 #' @param add_arrows Logical: add gradient vector field arrows (default: FALSE)
 #' @param arrow_scale Numeric arrow scaling factor (default: 3.0)
 #' @param arrow_skip Integer for arrow thinning (default: 1)
@@ -1119,6 +1584,9 @@ create_cdr_scale_dashboard <- function(sensitivity_results,
                                        add_contours           = TRUE,
                                        contour_breaks         = "auto",
                                        contour_alpha          = 0.6,
+                                       add_threshold_line     = FALSE,
+                                       threshold_value        = 1.5,
+                                       threshold_variable     = "peak_temperature",
                                        add_arrows             = FALSE,
                                        arrow_scale            = 3.0,
                                        arrow_skip             = 1,
@@ -1149,8 +1617,8 @@ create_cdr_scale_dashboard <- function(sensitivity_results,
   
   if (verbose) {
     cat(sprintf("  Variables: %s\n", paste(variables, collapse = ", ")))
-    cat(sprintf("  Features: contours=%s, arrows=%s, infeasible=%s\n",
-                add_contours, add_arrows, show_infeasible))
+    cat(sprintf("  Features: contours=%s, threshold_line=%s, arrows=%s, infeasible=%s\n",
+                add_contours, add_threshold_line, add_arrows, show_infeasible))
   }
   
   # Step 2: Prepare data
@@ -1197,10 +1665,13 @@ create_cdr_scale_dashboard <- function(sensitivity_results,
     variable_limits = variable_limits,
     palette_info    = palette_info,
     variable_labels = variable_labels,
-    add_contours    = add_contours,
-    contour_breaks  = contour_breaks,
-    contour_alpha   = contour_alpha,
-    add_arrows      = add_arrows,
+    add_contours       = add_contours,
+    contour_breaks     = contour_breaks,
+    contour_alpha      = contour_alpha,
+    add_threshold_line = add_threshold_line,
+    threshold_value    = threshold_value,
+    threshold_variable = threshold_variable,
+    add_arrows         = add_arrows,
     arrow_scale     = arrow_scale,
     arrow_skip      = arrow_skip,
     min_magnitude   = min_magnitude,
@@ -1333,7 +1804,16 @@ create_cdr_scale_temperature_dashboard <- function(sensitivity_results,
 #' plus legend on right), matching the delayed deployment dashboard style.
 #'
 #' @param sensitivity_results Results object from run_cdr_scale_sensitivity()
+#' @param add_contours Logical: add multi-line contours to both plots (default: TRUE)
 #' @param contour_alpha Transparency of contour lines (default: 0.6)
+#' @param add_threshold_line Logical: draw a threshold line on both plots
+#'   (default: FALSE)
+#' @param threshold_value_temp Threshold value for the peak temperature plot
+#'   (default: 1.5). Marks the 1.5°C boundary.
+#' @param threshold_value_years Threshold value for the years above 1.5 plot
+#'   (default: 0.5). A value of 0.5 sits cleanly between 0 and 1, tracing the
+#'   boundary where years_above_1p5 first exceeds zero — equivalent to the 1.5°C
+#'   line on the temperature plot.
 #' @param show_infeasible Logical: mark infeasible combinations (default: TRUE)
 #' @param use_scale_limits Logical: cap colour scale at percentile (default: FALSE)
 #' @param scale_limit_percentile Numeric percentile for capping (default: 95)
@@ -1345,7 +1825,11 @@ create_cdr_scale_temperature_dashboard <- function(sensitivity_results,
 #' @return Invisibly returns a list with both dashboard objects:
 #'   list(peak_temperature = ..., years_above_1p5 = ...)
 create_cdr_scale_temperature_dashboards <- function(sensitivity_results,
+                                                    add_contours           = TRUE,
                                                     contour_alpha          = 0.6,
+                                                    add_threshold_line     = FALSE,
+                                                    threshold_value_temp   = 1.5,
+                                                    threshold_value_years  = 0.5,
                                                     show_infeasible        = TRUE,
                                                     use_scale_limits       = FALSE,
                                                     scale_limit_percentile = 95,
@@ -1355,6 +1839,15 @@ create_cdr_scale_temperature_dashboards <- function(sensitivity_results,
                                                     height                 = 210,
                                                     verbose                = TRUE) {
   
+  # Build auto-filenames with variable label and timestamp if not supplied
+  datestamp <- format(Sys.time(), "%Y%m%d_%H%M%S")
+  if (is.null(filename_temp)) {
+    filename_temp  <- paste0("cdr_scale_sensitivity_peak_temp_", datestamp, ".pdf")
+  }
+  if (is.null(filename_years)) {
+    filename_years <- paste0("cdr_scale_sensitivity_years_above_1p5_", datestamp, ".pdf")
+  }
+  
   if (verbose) cat("Creating peak temperature dashboard...\n")
   
   dash_temp <- create_cdr_scale_dashboard(
@@ -1363,8 +1856,11 @@ create_cdr_scale_temperature_dashboards <- function(sensitivity_results,
     shared_scale           = FALSE,
     use_scale_limits       = use_scale_limits,
     scale_limit_percentile = scale_limit_percentile,
-    add_contours           = TRUE,
+    add_contours           = add_contours,
     contour_alpha          = contour_alpha,
+    add_threshold_line     = add_threshold_line,
+    threshold_value        = threshold_value_temp,
+    threshold_variable     = "peak_temperature",
     add_arrows             = FALSE,
     show_infeasible        = show_infeasible,
     save_plot              = TRUE,
@@ -1382,8 +1878,11 @@ create_cdr_scale_temperature_dashboards <- function(sensitivity_results,
     shared_scale           = FALSE,
     use_scale_limits       = use_scale_limits,
     scale_limit_percentile = scale_limit_percentile,
-    add_contours           = TRUE,
+    add_contours           = add_contours,
     contour_alpha          = contour_alpha,
+    add_threshold_line     = add_threshold_line,
+    threshold_value        = threshold_value_years,
+    threshold_variable     = "years_above_1p5",
     add_arrows             = FALSE,
     show_infeasible        = show_infeasible,
     save_plot              = TRUE,
