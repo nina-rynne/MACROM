@@ -7,3 +7,4 @@ README.html
 /output
 /optimal_control_project
 /src/optimal_control_isoperimetric.R
+deployment_curve.Rmd

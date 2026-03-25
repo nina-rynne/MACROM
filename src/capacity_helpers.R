@@ -171,13 +171,23 @@ make_logistic_from_zero <- function(g_initial, K, r, t_start) {
     stop("r must be positive (growth rate)")
   }
   
+  # Force all parameters into the closure so their values are captured by the
+  # enclosing environment rather than looked up by name at call time. This is
+  # necessary when the returned function is serialised and sent to parallel
+  # workers, which have a fresh environment where the caller's variables (e.g.
+  # cdr_t_start) are not in scope.
+  force(g_initial)
+  force(K)
+  force(r)
+  force(t_start)
+  
   # Pre-calculate the suppression factor for efficiency
   # This represents how much the initial capacity is suppressed relative to K
   suppression_factor <- (K / g_initial) - 1
   
   function(year) {
     if (year < t_start) {
-      return(0)
+      return(g_initial)
     }
     
     t <- year - t_start
