@@ -992,6 +992,176 @@ for (rate in names(capacity_growth_results)) {
 #
 ```
 
+```{r lowest_comparison_analysis, eval=FALSE}
+# ==============================================================================
+# Lowest Comparison Analysis
+# ==============================================================================
+# Compare optimal control solutions for SSP-specific (r, K) parameter pairs.
+# Unlike multi_scenario_comparison_analysis_capacity, which sweeps a shared set
+# of r values uniformly across all SSPs, this chunk assigns specific CDR logistic
+# parameter combinations to each SSP individually. Pairs are exact — if you
+# supply two (r, K) vectors for an SSP you get those two runs, not a grid.
+#
+# REQUIREMENTS: Must use single parameter set (parameter_df with 1 row)
+# OUTPUTS: Saved automatically to output/ as a single combined RDS
+# RUNTIME: ~5-15 minutes per (SSP, pair) with parallel processing
+
+# Source required functions
+source(here::here("src", "lowest_comparison.R"))
+source(here::here("src", "optimal_control_capacity.R"))
+source(here::here("src", "scenario_comparison_capacity.R"))
+source(here::here("src", "capacity_helpers.R"))
+
+# ==============================================================================
+# USER CHOICE: SSP-specific (r, K) parameter pairs
+# ==============================================================================
+# Each top-level name must match a scenario in emissions_df exactly.
+# Each SSP gets a list of c(r = ..., K = ...) vectors — one per run.
+# Pairs are labelled automatically: pair_1, pair_2, ...
+# K must be greater than cdr_g_initial for every pair.
+ssp_params <- list(
+  "SSP1-Baseline" = list(
+    c(r = 0.045, K = 95),
+    c(r = 0.07, K = 25)
+  ),
+  "SSP2-Baseline" = list(
+    c(r = 0.06, K = 161.5),
+    c(r = 0.11, K = 42.5)
+  ),
+  "SSP3-Baseline" = list(
+    c(r = 0.063, K = 144),
+    c(r = 0.128,  K = 42.5)
+  ),
+  "SSP4-Baseline" = list(
+    c(r = 0.052, K = 182.5),
+    c(r = 0.189, K = 25)
+  ),
+  "SSP5-Baseline" = list(
+    c(r = 0.074, K = 186),
+    c(r = 0.157, K = 63.5)
+  )
+)
+
+# ==============================================================================
+# USER CHOICE: Shared CDR logistic parameters (fixed across all SSPs and pairs)
+# ==============================================================================
+cdr_g_initial <- 2     # Starting CDR deployment level (GtCO2/year)
+cdr_t_start   <- 2025  # Year CDR deployment begins
+
+# ==============================================================================
+# USER CHOICE: Delay settings
+# ==============================================================================
+mitigation_delay <- 0  # Years before mitigation begins
+cdr_delay        <- 0  # Years before CDR deployment begins
+
+# ==============================================================================
+# USER CHOICE: Mitigation capacity constraint
+# ==============================================================================
+use_mitigation_capacity_limit <- TRUE
+mitigation_capacity_function  <- make_zero_capacity()
+
+# ==============================================================================
+# Run analysis across all SSPs and pairs
+# ==============================================================================
+lowest_results <- run_lowest_comparison(
+  parameter_df                  = parameter_df[1, ],
+  emissions_df                  = emissions_df,
+  economic_df                   = economic_df,
+  ssp_params                    = ssp_params,
+  g_initial                     = cdr_g_initial,
+  t_start                       = cdr_t_start,
+  mitigation_delay_years        = mitigation_delay,
+  cdr_delay_years               = cdr_delay,
+  use_mitigation_capacity_limit = use_mitigation_capacity_limit,
+  mitigation_capacity_function  = mitigation_capacity_function,
+  use_parallel                  = TRUE,
+  save_results                  = TRUE,
+  verbose                       = TRUE
+)
+
+# ==============================================================================
+# Quick summary across all SSPs and pairs
+# ==============================================================================
+for (ssp in names(lowest_results)) {
+  cat("\n---", ssp, "---\n")
+  for (pair in names(lowest_results[[ssp]])) {
+    run <- lowest_results[[ssp]][[pair]]
+    summary_df <- run$comparison_summary
+    if (!is.null(summary_df)) {
+      cat("  ", pair, "| peak temp:", round(summary_df$peak_temperature, 2),
+          "°C | years >1.5°C:", summary_df$years_above_1p5,
+          "| total cost:", round(summary_df$total_cost, 1), "\n")
+    }
+  }
+}
+
+# ==============================================================================
+# Interpretation Notes
+# ==============================================================================
+#
+# INDEXING INTO RESULTS:
+# lowest_results is a nested list keyed first by SSP, then by pair label.
+# Pair labels are auto-assigned as pair_1, pair_2, ... in the order you listed
+# the vectors in ssp_params.
+#
+#   lowest_results[["SSP3-Baseline"]][["pair_1"]]$comparison_summary
+#   lowest_results[["SSP3-Baseline"]][["pair_2"]]$scenario_results[["SSP3-Baseline"]]
+#
+# CHECKING WHICH PARAMETERS EACH PAIR USED:
+# The r and K values are not stored inside the result leaves — record them from
+# your ssp_params definition above, or add them manually to run_info if needed.
+#
+# PLOTTING ALL RUNS TOGETHER:
+# Use purrr::map_dfr to flatten across SSPs and pairs:
+#   purrr::map_dfr(names(lowest_results), function(ssp) {
+#     purrr::map_dfr(names(lowest_results[[ssp]]), function(pair) {
+#       s <- lowest_results[[ssp]][[pair]]$comparison_summary
+#       dplyr::mutate(s, pair = pair)
+#     }, .id = "pair_label")
+#   }, .id = "ssp")
+#
+```
+
+```{r lowest_comparison_visualisation, eval=FALSE}
+# ==============================================================================
+# Lowest Scenario Comparison Visualisation
+# ==============================================================================
+# Creates the 2-row × N-column dashboard (CDR top, temperature bottom)
+# comparing results across all SSPs and parameter pairs in lowest_results.
+# Each column = one SSP; within each panel, pair_1 and pair_2 are shown as
+# different linetypes ("Lowest growth rate" / "Lowest maximum capacity").
+# OUTPUTS: Saved automatically to figs/ directory
+
+# Source visualisation functions
+source(here::here("src", "lowest_analysis_dashboard.R"))
+
+# Check results exist
+if (!exists("lowest_results")) {
+  stop("lowest_results not found. ",
+       "Please run the lowest_comparison_analysis chunk first. ",
+       "Alternatively, reload a saved RDS: ",
+       "lowest_results <- readRDS(here::here('output', 'your_file.rds'))")
+}
+
+# Create and save the dashboard
+lowest_dashboard <- create_lowest_comparison_dashboard(
+  lowest_results      = lowest_results,
+  show_capacity_limit = TRUE,
+  # Required when show_capacity_limit = TRUE — pass the same values used in
+  # lowest_comparison_analysis so the capacity curves can always be reconstructed
+  # even when loading results from an older RDS file
+  ssp_params          = ssp_params,
+  g_initial           = cdr_g_initial,
+  t_start             = cdr_t_start,
+  save_plot           = TRUE,
+  width               = 297,   # A4 landscape width (mm)
+  height              = 210,   # Adjust to taste
+  verbose             = TRUE
+)
+
+print(lowest_dashboard)
+```
+
 ```{r extract_capacity_summary}
 # ==============================================================================
 # Extract Key Metrics from Capacity Growth Results
