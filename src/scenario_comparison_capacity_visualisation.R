@@ -48,9 +48,9 @@ ssp_names <- c("SSP1", "SSP2", "SSP3", "SSP4", "SSP5")
 
 # Growth rate line types and labels, ordered slow → moderate → fast
 growth_rate_linetypes <- c(
-  "slow"     = "solid",
+  "slow"     = "dotted",
   "moderate" = "dashed",
-  "fast"     = "dotted"
+  "fast"     = "solid"
 )
 
 growth_rate_labels <- c(
@@ -146,6 +146,66 @@ extract_ssp_variable <- function(capacity_results, ssp, variable) {
   })
 }
 
+#' @title Extract CDR Capacity Curve Data Across Growth Rates
+#' @description
+#' Evaluates the logistic capacity curve for each growth rate using the
+#' parameters stored in run_info (g_initial, K, r_value, t_start), returning
+#' a tidy data frame in the same shape as extract_ssp_variable() output.
+#' The years vector is taken from the first available SSP result for each rate,
+#' so the capacity curve spans the same time axis as the plotted data.
+#'
+#' @param capacity_results Named list as returned by
+#'   run_capacity_growth_comparison().
+#' @return Data frame with columns: growth_rate, years, value
+extract_cdr_capacity <- function(capacity_results) {
+  
+  map_dfr(names(growth_rate_linetypes), function(rate) {
+    
+    rate_entry <- capacity_results[[rate]]
+    if (is.null(rate_entry)) {
+      warning(sprintf("No results found for growth rate '%s'", rate))
+      return(NULL)
+    }
+    
+    # Pull capacity parameters saved in run_info
+    run_info <- rate_entry$run_info
+    if (is.null(run_info$g_initial) || is.null(run_info$K) ||
+        is.null(run_info$r_value)   || is.null(run_info$t_start)) {
+      warning(sprintf(
+        "run_info for growth rate '%s' is missing capacity parameters. ",
+        "Re-run with the updated scenario_comparison_capacity.R.", rate))
+      return(NULL)
+    }
+    
+    g_initial <- run_info$g_initial
+    K         <- run_info$K
+    r         <- run_info$r_value
+    t_start   <- run_info$t_start
+    
+    # Pre-compute suppression factor (matches make_logistic_from_zero)
+    suppression_factor <- (K / g_initial) - 1
+    
+    # Get years vector from the first available SSP result for this rate
+    scenario_results <- rate_entry$scenario_results
+    first_result     <- scenario_results[[1]]
+    years            <- first_result$years
+    
+    # Evaluate logistic formula: g(t) = K / (1 + suppression * exp(-r*(t-t_start)))
+    # Return g_initial for years before t_start (matches make_logistic_from_zero)
+    capacity_values <- ifelse(
+      years < t_start,
+      g_initial,
+      K / (1 + suppression_factor * exp(-r * (years - t_start)))
+    )
+    
+    data.frame(
+      growth_rate = rate,
+      years       = years,
+      value       = capacity_values
+    )
+  })
+}
+
 # ============================================================================
 # Individual panel functions
 # ============================================================================
@@ -217,13 +277,17 @@ plot_capacity_temperature <- function(capacity_results,
 #' @param y_limits Numeric vector of length 2 for shared y-axis limits.
 #' @param show_y_axis Logical; show y-axis title and text (default TRUE).
 #' @param show_x_axis Logical; show x-axis title (default TRUE).
+#' @param show_capacity_limit Logical; overlay the maximum CDR capacity curve
+#'   for each growth rate as a black line matching the growth rate linetype
+#'   (default FALSE).
 #' @return ggplot object
 plot_capacity_cdr <- function(capacity_results,
                               ssp,
                               ssp_colour,
-                              y_limits    = c(0, NA),
-                              show_y_axis = TRUE,
-                              show_x_axis = TRUE) {
+                              y_limits           = c(0, NA),
+                              show_y_axis        = TRUE,
+                              show_x_axis        = TRUE,
+                              show_capacity_limit = FALSE) {
   
   plot_data <- extract_ssp_variable(capacity_results, ssp, "qty_remov")
   
@@ -234,7 +298,22 @@ plot_capacity_cdr <- function(capacity_results,
   plot_data$growth_rate <- factor(plot_data$growth_rate,
                                   levels = names(growth_rate_linetypes))
   
-  p <- ggplot(plot_data, aes(x = years, y = value, linetype = growth_rate)) +
+  p <- ggplot(plot_data, aes(x = years, y = value, linetype = growth_rate))
+  
+  # Add capacity lines first so they render behind the results lines
+  if (show_capacity_limit) {
+    capacity_data <- extract_cdr_capacity(capacity_results)
+    capacity_data$growth_rate <- factor(capacity_data$growth_rate,
+                                        levels = names(growth_rate_linetypes))
+    p <- p +
+      geom_line(data        = capacity_data,
+                mapping     = aes(x = years, y = value, linetype = growth_rate),
+                colour      = "grey70",
+                linewidth   = 0.8,
+                inherit.aes = FALSE)
+  }
+  
+  p <- p +
     geom_line(colour = ssp_colour, linewidth = 0.8) +
     scale_linetype_manual(
       name   = "Growth rate",
@@ -307,11 +386,12 @@ plot_capacity_cdr <- function(capacity_results,
 #' )
 #'
 create_capacity_scenario_comparison_dashboard <- function(capacity_results,
-                                                          save_plot = FALSE,
-                                                          filename  = NULL,
-                                                          verbose   = TRUE,
-                                                          width     = 297,
-                                                          height    = 180) {
+                                                          save_plot           = FALSE,
+                                                          filename            = NULL,
+                                                          verbose             = TRUE,
+                                                          show_capacity_limit = FALSE,
+                                                          width               = 297,
+                                                          height              = 180) {
   
   # Validate top-level structure
   required_rates <- names(growth_rate_linetypes)  # "slow", "moderate", "fast"
@@ -351,7 +431,17 @@ create_capacity_scenario_comparison_dashboard <- function(capacity_results,
       if (!is.null(result)) data.frame(cdr = result$qty_remov)
     })
   })
-  cdr_y_limits <- c(0, ceiling(max(all_cdr$cdr, na.rm = TRUE) * 1.05))
+  
+  # If capacity lines are shown, include their values in the y-axis upper bound
+  # so the capacity curve is never clipped
+  if (show_capacity_limit) {
+    capacity_data    <- extract_cdr_capacity(capacity_results)
+    cdr_upper        <- max(max(all_cdr$cdr, na.rm = TRUE),
+                            max(capacity_data$value, na.rm = TRUE))
+  } else {
+    cdr_upper        <- max(all_cdr$cdr, na.rm = TRUE)
+  }
+  cdr_y_limits <- c(0, ceiling(cdr_upper * 1.05))
   
   if (verbose) {
     cat(sprintf("Temperature y-axis: %.1f – %.1f °C\n",
@@ -360,11 +450,11 @@ create_capacity_scenario_comparison_dashboard <- function(capacity_results,
   }
   
   # ── Build individual panels ───────────────────────────────────────────────
-  # Panel letters a-e for temperature row, f-j for CDR row.
+  # Panel letters a-e for CDR row, f-j for temperature row.
   # Subtitles are plain black text — colour identity is carried by line colour.
   
-  panel_letters_temp <- letters[1:5]   # a, b, c, d, e
-  panel_letters_cdr  <- letters[6:10]  # f, g, h, i, j
+  panel_letters_cdr  <- letters[1:5]   # a, b, c, d, e
+  panel_letters_temp <- letters[6:10]  # f, g, h, i, j
   
   temp_panels <- vector("list", length(ssp_names))
   cdr_panels  <- vector("list", length(ssp_names))
@@ -380,19 +470,20 @@ create_capacity_scenario_comparison_dashboard <- function(capacity_results,
       ssp_colour       = ssp_col,
       y_limits         = temp_y_limits,
       show_y_axis      = show_y,
-      show_x_axis      = FALSE
+      show_x_axis      = TRUE
     )
     temp_panels[[i]] <- p_temp +
       labs(subtitle = bquote(bold(.(paste0(panel_letters_temp[i], ")"))) ~ .(ssp))) +
       theme(plot.subtitle = element_text(size = 9, hjust = 0, colour = "black"))
     
     p_cdr <- plot_capacity_cdr(
-      capacity_results = capacity_results,
-      ssp              = ssp,
-      ssp_colour       = ssp_col,
-      y_limits         = cdr_y_limits,
-      show_y_axis      = show_y,
-      show_x_axis      = TRUE
+      capacity_results    = capacity_results,
+      ssp                 = ssp,
+      ssp_colour          = ssp_col,
+      y_limits            = cdr_y_limits,
+      show_y_axis         = show_y,
+      show_x_axis         = FALSE,
+      show_capacity_limit = show_capacity_limit
     )
     cdr_panels[[i]] <- p_cdr +
       labs(subtitle = bquote(bold(.(paste0(panel_letters_cdr[i], ")"))) ~ .(ssp))) +
@@ -484,7 +575,7 @@ create_capacity_scenario_comparison_dashboard <- function(capacity_results,
     )
   
   cdr_panels[[1]] <- cdr_panels[[1]] +
-    labs(tag = "CDR strategies") +
+    labs(tag = "CDR deployment") +
     theme(
       plot.tag          = element_text(size = 9, face = "bold", hjust = 0),
       plot.tag.position = "top"
@@ -494,7 +585,7 @@ create_capacity_scenario_comparison_dashboard <- function(capacity_results,
   temp_row <- wrap_plots(temp_panels, nrow = 1)
   cdr_row  <- wrap_plots(cdr_panels,  nrow = 1)
   
-  main_grid <- temp_row / cdr_row
+  main_grid <- cdr_row / temp_row
   
   # Stack: title / main grid / legend strip
   final_plot <- cowplot::plot_grid(

@@ -582,13 +582,23 @@ create_cdr_scale_base_heatmap <- function(scenario_data,
       oob       = scales::squish,
       labels    = scales::comma
     ) +
-    scale_y_continuous(breaks = seq(0.02, 0.30, by = 0.02)) +
+    scale_y_continuous(breaks = c(0.02, 0.04, 0.08, 0.12, 0.16, 0.20),
+                       labels = function(x) x * 100) +
     labs(
       title = plot_title,
       x     = x_axis_label,
       y     = y_axis_label
     ) +
     theme_object
+  
+  # When y-axis label is suppressed, also remove tick text and tick marks so
+  # that non-leftmost panels do not display y-axis numbers or ticks.
+  if (!show_y_label) {
+    p <- p + theme(
+      axis.text.y  = element_blank(),
+      axis.ticks.y = element_blank()
+    )
+  }
   
   return(p)
 }
@@ -1127,7 +1137,10 @@ create_cdr_scale_outcome_plot <- function(sensitivity_results,
           unrecoverable = "Unrecoverable overshoot"
         ),
         na.value = "grey90",
-        guide = guide_legend(
+        drop     = FALSE
+      ) +
+      guides(
+        fill = guide_legend(
           override.aes = list(
             fill   = c("white",
                        scales::alpha("#666666", alpha_recoverable),
@@ -1136,7 +1149,8 @@ create_cdr_scale_outcome_plot <- function(sensitivity_results,
           )
         )
       ) +
-      scale_y_continuous(breaks = seq(0.02, 0.30, by = 0.04)) +
+      scale_y_continuous(breaks = c(0.02, 0.04, 0.08, 0.12, 0.16, 0.20),
+                         labels = function(x) x * 100) +
       labs(
         title = scen,
         x     = expression("Maximum capacity (GtCO"[2]*"/year)"),
@@ -1225,6 +1239,12 @@ create_cdr_scale_outcome_plot <- function(sensitivity_results,
 #' @param arrow_alpha Arrow transparency (default: 0.7)
 #' @param mag_limits Numeric c(min, max) for gradient magnitude scale
 #' @param show_infeasible Logical: mark infeasible combinations (default: TRUE)
+#' @param panel_label_offset Integer: offset added to the panel counter before
+#'   converting to a letter label (default: 0). Set to 5 for the second row of
+#'   a combined dashboard so panels are labelled F–J instead of A–E.
+#' @param multi_row_theme Logical: force the multi-row (smaller) theme even when
+#'   only one variable is passed. Used by the combined dashboard to keep text
+#'   sizes consistent across both rows (default: FALSE).
 #' @param verbose Logical: print progress messages (default: TRUE)
 #'
 #' @return Nested named list: list(variable = list(scenario_short = ggplot))
@@ -1240,23 +1260,25 @@ create_cdr_scale_plot_grid <- function(data,
                                        threshold_value     = 1.5,
                                        threshold_variable  = "peak_temperature",
                                        add_arrows          = FALSE,
-                                       arrow_scale     = 3.0,
-                                       arrow_skip      = 1,
-                                       min_magnitude   = 0,
-                                       arrow_size      = 0.5,
-                                       arrow_alpha     = 0.7,
-                                       mag_limits      = NULL,
-                                       show_infeasible = TRUE,
-                                       verbose         = TRUE) {
+                                       arrow_scale         = 3.0,
+                                       arrow_skip          = 1,
+                                       min_magnitude       = 0,
+                                       arrow_size          = 0.5,
+                                       arrow_alpha         = 0.7,
+                                       mag_limits          = NULL,
+                                       show_infeasible     = TRUE,
+                                       panel_label_offset  = 0,
+                                       multi_row_theme     = FALSE,
+                                       verbose             = TRUE) {
   
   n_variables  <- length(variables)
-  multi_row    <- n_variables > 1
+  multi_row    <- n_variables > 1 || multi_row_theme
   theme_object <- get_cdr_scale_theme(multi_row = multi_row)
   
   scenarios_present <- intersect(SSP_SCENARIO_ORDER_SCALE,
                                  unique(data$scenario_short))
   
-  panel_counter   <- 0
+  panel_counter   <- panel_label_offset
   panel_labels    <- LETTERS
   panel_grid_list <- list()
   
@@ -1292,6 +1314,9 @@ create_cdr_scale_plot_grid <- function(data,
       }
       
       # Axis label visibility rules
+      # When called per-variable (combined dashboard), show_x = TRUE so panels
+      # are built with labels; the caller suppresses them on the top row via
+      # post-hoc & theme() stripping after assembly.
       show_x <- (v_idx == n_variables)   # x label on bottom row only
       show_y <- (s_idx == 1)             # y label on leftmost column only
       # FIX: renamed from show_title to show_panel_title to avoid shadowing the
@@ -1896,6 +1921,323 @@ create_cdr_scale_temperature_dashboards <- function(sensitivity_results,
     peak_temperature = dash_temp,
     years_above_1p5  = dash_years
   ))
+}
+
+
+#' @title Create Combined CDR Scale Temperature Dashboard (Two Rows, Single File)
+#' @description
+#' Creates a single combined dashboard with two rows of heatmap panels:
+#' row 1 = peak_temperature, row 2 = years_above_1p5. Each row contains one
+#' panel per SSP scenario (5 columns) and its own colour-scale legend on the
+#' right-hand side. The two legends use independent colour scales and palettes
+#' (plasma for peak temperature, viridis for years above 1.5°C).
+#'
+#' This is an alternative to create_cdr_scale_temperature_dashboards(), which
+#' produces two separate single-row PDF files. Use this function when you want
+#' both variables in one figure.
+#'
+#' @param sensitivity_results Results object from run_cdr_scale_sensitivity()
+#' @param add_contours Logical: add multi-line contours to both rows (default: TRUE)
+#' @param contour_alpha Transparency of contour lines (default: 0.6)
+#' @param add_threshold_line Logical: draw a threshold line on both rows
+#'   (default: FALSE)
+#' @param threshold_value_temp Threshold value for the peak temperature row
+#'   (default: 1.5). Marks the 1.5°C boundary.
+#' @param threshold_value_years Threshold value for the years above 1.5 row
+#'   (default: 0.5). Traces the boundary where years_above_1p5 first exceeds
+#'   zero — equivalent to the 1.5°C line on the temperature row.
+#' @param show_infeasible Logical: mark infeasible combinations (default: TRUE)
+#' @param use_scale_limits Logical: cap colour scale at percentile (default: FALSE)
+#' @param scale_limit_percentile Numeric percentile for capping (default: 95)
+#' @param save_plot Logical: save to file (default: FALSE)
+#' @param filename Character string for output filename (default: NULL for auto)
+#' @param width Numeric width in mm (default: 297)
+#' @param height Numeric height in mm (default: 280, taller to accommodate two rows)
+#' @param verbose Logical: print progress messages (default: TRUE)
+#' @return Invisibly returns the combined patchwork object
+create_cdr_scale_temperature_dashboards_combined <- function(
+    sensitivity_results,
+    add_contours           = TRUE,
+    contour_alpha          = 0.6,
+    add_threshold_line     = FALSE,
+    threshold_value_temp   = 1.5,
+    threshold_value_years  = 0.5,
+    show_infeasible        = TRUE,
+    use_scale_limits       = FALSE,
+    scale_limit_percentile = 95,
+    save_plot              = FALSE,
+    filename               = NULL,
+    width                  = 297,
+    height                 = 280,
+    verbose                = TRUE) {
+  
+  if (verbose) cat("\n=== COMBINED TEMPERATURE DASHBOARD CREATION ===\n\n")
+  
+  # ------------------------------------------------------------------
+  # Step 1: Prepare data (shared between both rows)
+  # ------------------------------------------------------------------
+  if (verbose) cat("Step 1: Preparing data\n")
+  
+  variables <- c("peak_temperature", "years_above_1p5")
+  plot_data <- prepare_cdr_scale_data(sensitivity_results, variables, verbose)
+  
+  scenarios_present <- intersect(SSP_SCENARIO_ORDER_SCALE,
+                                 unique(plot_data$scenario_short))
+  n_scenarios <- length(scenarios_present)
+  
+  # ------------------------------------------------------------------
+  # Step 2: Independent colour scale limits (one per variable)
+  # ------------------------------------------------------------------
+  if (verbose) cat("\nStep 2: Calculating colour scale limits\n")
+  
+  limits_temp  <- calculate_cdr_scale_limits(
+    data                   = plot_data,
+    variables              = "peak_temperature",
+    shared_scale           = FALSE,
+    use_scale_limits       = use_scale_limits,
+    scale_limit_percentile = scale_limit_percentile,
+    verbose                = verbose
+  )
+  limits_years <- calculate_cdr_scale_limits(
+    data                   = plot_data,
+    variables              = "years_above_1p5",
+    shared_scale           = FALSE,
+    use_scale_limits       = use_scale_limits,
+    scale_limit_percentile = scale_limit_percentile,
+    verbose                = verbose
+  )
+  
+  # ------------------------------------------------------------------
+  # Step 3: Palettes and labels (multi-line right-legend labels)
+  # ------------------------------------------------------------------
+  if (verbose) cat("\nStep 3: Configuring palettes and labels\n")
+  
+  palette_info    <- list(
+    peak_temperature = get_cdr_scale_palette("peak_temperature"),
+    years_above_1p5  = get_cdr_scale_palette("years_above_1p5")
+  )
+  # single_line = FALSE → use the multi-line labels suited to a right-side legend
+  variable_labels <- list(
+    peak_temperature = get_cdr_scale_label("peak_temperature", NULL, single_line = FALSE),
+    years_above_1p5  = get_cdr_scale_label("years_above_1p5",  NULL, single_line = FALSE)
+  )
+  
+  # ------------------------------------------------------------------
+  # Step 4: Build panel grids — one call per row
+  #   Row 1 (peak_temperature): panels A–E, no x-axis labels (suppressed below)
+  #   Row 2 (years_above_1p5):  panels F–J, x-axis labels shown
+  # ------------------------------------------------------------------
+  if (verbose) cat("\nStep 4: Building panel grids\n")
+  if (verbose) cat("  Row 1: peak_temperature\n")
+  
+  grid_temp <- create_cdr_scale_plot_grid(
+    data               = plot_data,
+    variables          = "peak_temperature",
+    variable_limits    = limits_temp,
+    palette_info       = palette_info,
+    variable_labels    = variable_labels,
+    add_contours       = add_contours,
+    contour_breaks     = "auto",
+    contour_alpha      = contour_alpha,
+    add_threshold_line = add_threshold_line,
+    threshold_value    = threshold_value_temp,
+    threshold_variable = "peak_temperature",
+    add_arrows         = FALSE,
+    show_infeasible    = show_infeasible,
+    panel_label_offset = 0,             # panels A–E
+    multi_row_theme    = TRUE,          # keep text sizes consistent with row 2
+    verbose            = verbose
+  )
+  
+  if (verbose) cat("  Row 2: years_above_1p5\n")
+  
+  grid_years <- create_cdr_scale_plot_grid(
+    data               = plot_data,
+    variables          = "years_above_1p5",
+    variable_limits    = limits_years,
+    palette_info       = palette_info,
+    variable_labels    = variable_labels,
+    add_contours       = add_contours,
+    contour_breaks     = "auto",
+    contour_alpha      = contour_alpha,
+    add_threshold_line = add_threshold_line,
+    threshold_value    = threshold_value_years,
+    threshold_variable = "years_above_1p5",
+    add_arrows         = FALSE,
+    show_infeasible    = show_infeasible,
+    panel_label_offset = n_scenarios,   # panels F–J (offset by 5)
+    multi_row_theme    = TRUE,
+    verbose            = verbose
+  )
+  
+  # ------------------------------------------------------------------
+  # Step 5: Extract one legend per row
+  # ------------------------------------------------------------------
+  if (verbose) cat("\nStep 5: Extracting legends\n")
+  
+  make_legend_plot <- function(variable, var_limits, pal_info, var_label) {
+    first_scenario <- scenarios_present[1]
+    legend_data    <- plot_data %>% filter(scenario_short == first_scenario)
+    p <- create_cdr_scale_base_heatmap(
+      scenario_data   = legend_data,
+      variable        = variable,
+      variable_limits = var_limits[[variable]],
+      palette_info    = pal_info[[variable]],
+      variable_label  = var_label[[variable]],
+      scenario_name   = first_scenario,
+      show_title      = FALSE,
+      theme_object    = get_cdr_scale_theme(multi_row = TRUE)
+    )
+    p +
+      theme(
+        legend.position    = "right",
+        legend.title       = element_text(size = 11),
+        legend.text        = element_text(size = 10),
+        legend.key.width   = unit(0.5, "cm"),
+        legend.key.height  = unit(2.0, "cm")
+      ) +
+      guides(fill = guide_colorbar(
+        barwidth  = 0.5,
+        barheight = 8,
+        title.position = "top",
+        title.hjust    = 0.5
+      ))
+  }
+  
+  legend_grob_temp  <- extract_cdr_scale_legend(
+    make_legend_plot("peak_temperature", limits_temp,  palette_info, variable_labels),
+    "right"
+  )
+  legend_grob_years <- extract_cdr_scale_legend(
+    make_legend_plot("years_above_1p5",  limits_years, palette_info, variable_labels),
+    "right"
+  )
+  
+  if (verbose) cat("  Legends extracted\n")
+  
+  # ------------------------------------------------------------------
+  # Step 6: Assemble each row as a 1x5 patchwork + legend
+  # ------------------------------------------------------------------
+  if (verbose) cat("\nStep 6: Assembling rows\n")
+  
+  # Flatten panel grids into ordered lists
+  flatten_panels <- function(grid, variable) {
+    lapply(scenarios_present, function(scen) {
+      p <- grid[[variable]][[scen]]
+      if (is.null(p)) patchwork::plot_spacer() else p
+    })
+  }
+  
+  panels_temp  <- flatten_panels(grid_temp,  "peak_temperature")
+  panels_years <- flatten_panels(grid_years, "years_above_1p5")
+  
+  # Build each row as a strict 1-row x 5-column patchwork (panels only).
+  # The legend is kept separate and drawn into its own viewport beside the
+  # panels. This avoids passing the legend through any patchwork operator,
+  # which is what triggers the wrap_dims() "Need 6 panels" error.
+  make_panel_row <- function(panels) {
+    patchwork::wrap_plots(panels, nrow = 1, ncol = 5) &
+      theme(plot.margin = unit(c(1, 2, 1, 2), "mm"))
+  }
+  
+  panel_row_temp  <- make_panel_row(panels_temp)
+  panel_row_years <- make_panel_row(panels_years)
+  
+  # Bundle everything into a named list — the combined "object" returned.
+  combined <- list(
+    panel_row_temp  = panel_row_temp,
+    panel_row_years = panel_row_years,
+    legend_temp     = legend_grob_temp,
+    legend_years    = legend_grob_years
+  )
+  
+  # ------------------------------------------------------------------
+  # Step 7: Stack the two rows
+  # ------------------------------------------------------------------
+  if (verbose) cat("\nStep 7: Stacking rows into combined dashboard\n")
+  
+  # Draw both rows on one page using viewports. Each patchwork (panels only)
+  # is printed into a viewport occupying the left 92% of each half-page row.
+  # The legend for each row is drawn into the remaining 8% on the right.
+  # Nothing passes through patchwork's layout engine after this point.
+  legend_width_frac <- 0.08   # fraction of total width given to legend column
+  panel_width_frac  <- 1 - legend_width_frac
+  
+  draw_combined <- function(panel_top, legend_top, panel_bot, legend_bot) {
+    grid::grid.newpage()
+    
+    # --- Top row ---
+    vp_top_panels <- grid::viewport(
+      x = panel_width_frac / 2, y = 0.75,
+      width = panel_width_frac, height = 0.5,
+      just = c("centre", "centre")
+    )
+    print(panel_top, vp = vp_top_panels)
+    
+    vp_top_legend <- grid::viewport(
+      x = panel_width_frac + legend_width_frac / 2, y = 0.75,
+      width = legend_width_frac, height = 0.5,
+      just = c("centre", "centre")
+    )
+    grid::pushViewport(vp_top_legend)
+    grid::grid.draw(legend_top)
+    grid::popViewport()
+    
+    # --- Bottom row ---
+    vp_bot_panels <- grid::viewport(
+      x = panel_width_frac / 2, y = 0.25,
+      width = panel_width_frac, height = 0.5,
+      just = c("centre", "centre")
+    )
+    print(panel_bot, vp = vp_bot_panels)
+    
+    vp_bot_legend <- grid::viewport(
+      x = panel_width_frac + legend_width_frac / 2, y = 0.25,
+      width = legend_width_frac, height = 0.5,
+      just = c("centre", "centre")
+    )
+    grid::pushViewport(vp_bot_legend)
+    grid::grid.draw(legend_bot)
+    grid::popViewport()
+  }
+  
+  # ------------------------------------------------------------------
+  # Step 8: Save if requested
+  # ------------------------------------------------------------------
+  if (save_plot) {
+    if (verbose) cat("\nStep 8: Saving combined dashboard\n")
+    if (is.null(filename)) {
+      filename <- paste0("cdr_scale_sensitivity_temperature_combined_",
+                         format(Sys.time(), "%Y%m%d_%H%M%S"), ".pdf")
+    }
+    if (!grepl("\\.pdf$", filename, ignore.case = TRUE)) {
+      filename <- paste0(filename, ".pdf")
+    }
+    filepath        <- here::here("figs", filename)
+    output_dir_full <- here::here("figs")
+    if (!dir.exists(output_dir_full)) dir.create(output_dir_full, recursive = TRUE)
+    if (verbose) {
+      cat(sprintf("Saving dashboard to: %s\n", filepath))
+      cat(sprintf("Dimensions: %d x %d mm\n", width, height))
+    }
+    grDevices::cairo_pdf(
+      filename = filepath,
+      width    = width  / 25.4,
+      height   = height / 25.4
+    )
+    draw_combined(panel_row_temp, legend_grob_temp, panel_row_years, legend_grob_years)
+    grDevices::dev.off()
+    if (verbose) {
+      cat(sprintf("\n=== COMBINED DASHBOARD COMPLETE ===\nSaved to: %s\n\n", filepath))
+    }
+    return(invisible(combined))
+  }
+  
+  # For interactive display, draw to the current device
+  draw_combined(panel_row_temp, legend_grob_temp, panel_row_years, legend_grob_years)
+  
+  if (verbose) cat("\n=== COMBINED DASHBOARD COMPLETE ===\n\n")
+  return(invisible(combined))
 }
 
 

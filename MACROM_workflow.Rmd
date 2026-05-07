@@ -91,6 +91,7 @@ library(viridis)      # Colourblind friendly palettes
 library(colorspace)   # Advanced colour manipulation
 library(scales)       # Scale functions for visualisation
 library(metR)         # Contour line labelling
+library(gridExtra)    # Plot arrangement
 ```
 
 ```{r data_preparation_call}
@@ -504,14 +505,14 @@ source(here::here("src", "cdr_scale_sensitivity.R"))
 # ==============================================================================
 K_min <- 25     # Minimum CDR carrying capacity (GtCO2/year)
 K_max <- 200    # Maximum CDR carrying capacity (GtCO2/year)
-n_K   <- 50     # Number of K values to test
+n_K   <- 51     # Number of K values to test
 
 # ==============================================================================
 # USER CHOICE: CDR r range (growth rate)
 # ==============================================================================
 r_min       <- 0.02    # Minimum CDR growth rate
 r_max       <- 0.20    # Maximum CDR growth rate
-n_r         <- 50      # Number of r values to test
+n_r         <- 51      # Number of r values to test
 r_log_scale <- FALSE   # Set TRUE for log-spaced r values (useful if r spans
                        # more than one order of magnitude)
 
@@ -610,32 +611,44 @@ if (!exists("cdr_scale_sensitivity_results")) {
 #   c("total_cost", "abatement_cost", "temp_cost")
 
 # Create temperature dashboard
-cdr_scale_dashboards <- create_cdr_scale_temperature_dashboards(
-  sensitivity_results   = cdr_scale_sensitivity_results,
-  add_contours          = FALSE,
-  add_threshold_line    = TRUE,
-  threshold_value_temp  = 1.5,   # can omit — this is the default
-  threshold_value_years = 0.5,   # can omit — this is the default
-  show_infeasible       = FALSE,
-  width                 = 297,
-  height                = 210,
-  verbose               = TRUE
+# cdr_scale_dashboards <- create_cdr_scale_temperature_dashboards(
+#   sensitivity_results   = cdr_scale_sensitivity_results,
+#   add_contours          = FALSE,
+#   add_threshold_line    = FALSE,
+#   threshold_value_temp  = 1.5,   # can omit — this is the default
+#   threshold_value_years = 0.5,   # can omit — this is the default
+#   show_infeasible       = FALSE,
+#   width                 = 297,
+#   height                = 210,
+#   verbose               = TRUE
+# )
+
+cdr_scale_dashboards_combined <- create_cdr_scale_temperature_dashboards_combined(
+  sensitivity_results    = cdr_scale_sensitivity_results,
+  add_contours           = FALSE,
+  add_threshold_line     = FALSE,
+  threshold_value_temp   = 1.5,
+  threshold_value_years  = 0.5,
+  show_infeasible        = FALSE,
+  width                  = 297,
+  height                 = 140,
+  save_plot              = TRUE,
+  verbose                = TRUE
 )
 
-
-cdr_threshold_plot <- create_cdr_scale_threshold_plot(
-  sensitivity_results   = cdr_scale_sensitivity_results,
-  threshold_value_temp  = 1.5,
-  threshold_value_years = 0.5,
-  save_plot             = TRUE,
-  width                 = 190,
-  height                = 100,
-  verbose               = TRUE
-)
+# cdr_threshold_plot <- create_cdr_scale_threshold_plot(
+#   sensitivity_results   = cdr_scale_sensitivity_results,
+#   threshold_value_temp  = 1.5,
+#   threshold_value_years = 0.5,
+#   save_plot             = TRUE,
+#   width                 = 190,
+#   height                = 100,
+#   verbose               = TRUE
+# )
 
 cdr_outcome_plot <- create_cdr_scale_outcome_plot(
   sensitivity_results = cdr_scale_sensitivity_results,
-  threshold           = 1.5,
+  threshold           = 1.505,
   alpha_recoverable   = 0.35,
   alpha_unrecoverable = 0.85,
   save_plot           = TRUE,
@@ -645,8 +658,102 @@ cdr_outcome_plot <- create_cdr_scale_outcome_plot(
 )
 
 # Display the dashboard
-print(cdr_scale_dashboards)
+#print(cdr_scale_dashboards)
 ```
+
+```{r cdr_scale_data_results}
+
+g <- function(t, r, K, g_initial = 2, t0 = 0) {
+  K / (1 + (K / g_initial - 1) * exp(-r * (t - t0)))
+}
+
+feasible_min <- bind_rows(
+  # Rows selected by minimum r
+  cdr_scale_sensitivity_results$combined_results |>
+    filter(feasible == TRUE, final_temperature <= 1.501, peak_temperature >= 1.51) |>
+    group_by(scenario) |>
+    slice_min(order_by = r, n = 1, with_ties = FALSE) |>
+    mutate(selected_by = "min_r") |>
+    select(scenario, selected_by, r, K, final_temperature, peak_temperature, years_above_1p5, total_cdr_units, total_cost),
+  
+  # Rows selected by minimum K
+  cdr_scale_sensitivity_results$combined_results |>
+    filter(feasible == TRUE, final_temperature <= 1.501, peak_temperature >= 1.51) |>
+    group_by(scenario) |>
+    slice_min(order_by = K, n = 1, with_ties = FALSE) |>
+    mutate(selected_by = "min_K") |>
+    select(scenario, selected_by, r, K, final_temperature, peak_temperature, years_above_1p5, total_cdr_units, total_cost)
+) |>
+  rowwise() |>
+  mutate(AUC = integrate(g, lower = 0, upper = 75, r = r, K = K)$value) |>
+  ungroup() |>
+  arrange(scenario, selected_by)
+
+print(feasible_min)
+
+write.csv(feasible_min, here("output", "feasible_min.csv"), row.names = FALSE)
+
+cdr_threshold <- bind_rows(
+  # Maximum CDR units in failed runs (minimum needed to potentially recover)
+  cdr_scale_sensitivity_results$combined_results |>
+    filter(feasible == FALSE) |>
+    group_by(scenario) |>
+    summarise(
+      max_cdr_unrecoverable = max(total_cdr_units, na.rm = TRUE),
+      .groups = "drop"
+    ),
+  
+  # Minimum CDR units in successful runs (for cross-reference)
+  cdr_scale_sensitivity_results$combined_results |>
+    filter(feasible == TRUE) |>
+    group_by(scenario) |>
+    summarise(
+      min_cdr_recoverable = min(total_cdr_units, na.rm = TRUE),
+      .groups = "drop"
+    )
+) |>
+  group_by(scenario) |>
+  summarise(across(everything(), ~ first(na.omit(.))), .groups = "drop") |>
+  arrange(scenario)
+
+print(cdr_threshold)
+
+write.csv(cdr_threshold, here("output", "cdr_threshold.csv"), row.names = FALSE)
+
+cumulative_emissions <- emissions_df |>
+  filter(Year >= 2025) |>
+  group_by(Scenario) |>
+  summarise(
+    cumulative_emissions = sum(Value, na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  arrange(Scenario)
+
+print(cumulative_emissions)
+
+cdr_threshold |>
+  left_join(cumulative_emissions, by = c("scenario" = "Scenario")) |>
+  mutate(expected_cdr = cumulative_emissions - 650,
+         difference = max_cdr_unrecoverable - expected_cdr)
+
+
+min_unrecoverable <- cdr_scale_sensitivity_results$combined_results |>
+  mutate(peak_temp_rounded = round(peak_temperature, 2)) |>
+  group_by(scenario) |>
+  summarise(
+    threshold = min(peak_temp_rounded[
+      sapply(peak_temp_rounded, function(pt) {
+        all(!feasible[peak_temp_rounded >= pt])
+      })
+    ], na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  arrange(scenario)
+
+print(min_unrecoverable)
+
+```
+
 
 
 
@@ -704,7 +811,7 @@ use_cdr_capacity_limit <- TRUE  # Set TRUE to activate
 cdr_capacity_function <- make_logistic_from_zero(
   g_initial = 2,  # Current CDR levels
   K = 100,            # Maximum realistic capacity
-  r = 0.11,          # Moderate acceleration
+  r = 0.07,          # Moderate acceleration
   t_start = 2025
 )
 
@@ -804,7 +911,7 @@ cdr_delay        <- 0  # Years before CDR deployment begins
 # Each entry is a named r value passed to make_logistic_from_zero().
 # The name becomes the key in the results list and in saved filenames.
 # Add, remove, or rename entries freely — the wrapper iterates over all of them.
-# Common values: slow ≈ 0.07, moderate ≈ 0.11, fast ≈ 0.18
+# Common values: slow ≈ 0.05, moderate ≈ 0.07, fast ≈ 0.11
 cdr_r_values <- c(
   slow     = 0.05,
   moderate = 0.07,
@@ -962,6 +1069,7 @@ if (!exists("capacity_growth_results")) {
 # Create and save the 10-panel dashboard
 capacity_dashboard <- create_capacity_scenario_comparison_dashboard(
   capacity_results = capacity_growth_results,
+  show_capacity_limit = FALSE,
   save_plot        = TRUE,
   width            = 297,   # A4 landscape width (mm)
   height           = 210,   # Adjust to taste

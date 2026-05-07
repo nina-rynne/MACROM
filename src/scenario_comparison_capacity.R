@@ -674,6 +674,9 @@ run_capacity_growth_comparison <- function(parameter_df,
     # Attach the r value used to run_info for traceability
     rate_results$run_info$r_value    <- r_val
     rate_results$run_info$rate_label <- rate_label
+    rate_results$run_info$g_initial  <- g_initial
+    rate_results$run_info$K          <- K
+    rate_results$run_info$t_start    <- t_start
     
     all_results[[rate_label]] <- rate_results
   }
