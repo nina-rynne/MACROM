@@ -6,5 +6,6 @@ README.html
 /figs
 /output
 /optimal_control_project
+/src/isoperimetric_scenario_comparison.R
 /src/optimal_control_isoperimetric.R
 deployment_curve.Rmd
