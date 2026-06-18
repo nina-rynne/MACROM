@@ -13,7 +13,7 @@
 #   [Full citation of your paper]
 # 
 # Version: 2.0.0
-# Last updated: February 2026
+# Last updated: March 2026
 # ==============================================================================
 
 #' @title Run Scenario Comparison Analysis
@@ -512,6 +512,201 @@ run_scenario_comparison <- function(parameter_df,
     )
   ))
 } # Close the run_scenario_comparison function
+
+
+# ============================================================================
+# Growth rate comparison wrapper
+# ============================================================================
+
+#' @title Run Scenario Comparison Across Multiple CDR Growth Rates
+#' @description
+#' Wrapper around run_scenario_comparison() that iterates over a named vector
+#' of CDR logistic growth rates (r), running the full scenario comparison once
+#' per rate value and assembling the results into a single nested list.
+#'
+#' The returned object mirrors the structure of run_scenario_comparison() at
+#' every level, with an additional top-level layer keyed by growth rate label.
+#' This makes it straightforward to index into individual rate results using
+#' the same field names already used elsewhere in the codebase.
+#'
+#' @param parameter_df Single-row data frame containing model parameters.
+#' @param emissions_df Data frame with emissions data for multiple scenarios.
+#' @param economic_df Data frame with economic data for multiple scenarios.
+#' @param scenarios Vector of scenario names to compare (e.g.,
+#'   c("SSP1-Baseline", ..., "SSP5-Baseline")).
+#' @param r_values Named numeric vector of CDR logistic growth rate values to
+#'   sweep over. Names become the top-level keys in the returned list and in
+#'   saved filenames (e.g., c(slow = 0.07, moderate = 0.11, fast = 0.18)).
+#' @param g_initial Starting CDR deployment level in GtCO2/year, passed to
+#'   make_logistic_from_zero() (default: 2).
+#' @param K Maximum CDR carrying capacity in GtCO2/year, passed to
+#'   make_logistic_from_zero() (default: 100).
+#' @param t_start Year CDR deployment begins, passed to
+#'   make_logistic_from_zero() (default: 2025).
+#' @param mitigation_delay_years Years to delay mitigation start (default: 0).
+#' @param cdr_delay_years Years to delay CDR deployment start (default: 0).
+#' @param use_mitigation_capacity_limit Logical; activate mitigation capacity
+#'   constraint (default: TRUE).
+#' @param mitigation_capacity_function Capacity function for mitigation
+#'   (default: make_zero_capacity()).
+#' @param use_parallel Logical; use parallel processing within each
+#'   run_scenario_comparison() call (default: TRUE).
+#' @param save_results Logical; save individual per-rate RDS files via
+#'   run_scenario_comparison() and a combined RDS at the end (default: TRUE).
+#' @param output_dir Directory for saved files (default: "output").
+#' @param output_prefix Prefix for saved filenames
+#'   (default: "capacity_growth_comparison").
+#' @param verbose Logical; print progress messages (default: TRUE).
+#'
+#' @return Named list with one element per entry in r_values. Each element is
+#'   the full list returned by run_scenario_comparison(), i.e.:
+#'   \describe{
+#'     \item{scenario_results}{Named list of per-SSP solution objects.}
+#'     \item{comparison_summary}{Data frame of key metrics across scenarios.}
+#'     \item{year_first_1p5C}{Named vector of first-crossing years.}
+#'     \item{year_peak_temp}{Named vector of peak temperature years.}
+#'     \item{year_mitig_capped}{Named vector of mitigation cap years.}
+#'     \item{failed_scenarios}{Named list of error messages.}
+#'     \item{run_info}{List of metadata including the r value used.}
+#'   }
+#'
+#' @examples
+#' capacity_results <- run_capacity_growth_comparison(
+#'   parameter_df = parameter_df[1, ],
+#'   emissions_df = emissions_df,
+#'   economic_df  = economic_df,
+#'   scenarios    = c("SSP1-Baseline", "SSP2-Baseline", "SSP3-Baseline",
+#'                    "SSP4-Baseline", "SSP5-Baseline"),
+#'   r_values     = c(slow = 0.07, moderate = 0.11, fast = 0.18),
+#'   g_initial    = 2,
+#'   K            = 100,
+#'   t_start      = 2025,
+#'   save_results = TRUE
+#' )
+#'
+#' # Access results for a specific rate and SSP exactly as before
+#' capacity_results$moderate$scenario_results[["SSP3-Baseline"]]$temperature_anomaly
+#'
+run_capacity_growth_comparison <- function(parameter_df,
+                                           emissions_df,
+                                           economic_df,
+                                           scenarios,
+                                           r_values,
+                                           g_initial                     = 2,
+                                           K                             = 100,
+                                           t_start                       = 2025,
+                                           mitigation_delay_years        = 0,
+                                           cdr_delay_years               = 0,
+                                           use_mitigation_capacity_limit = TRUE,
+                                           mitigation_capacity_function  = make_zero_capacity(),
+                                           use_parallel                  = TRUE,
+                                           save_results                  = TRUE,
+                                           output_dir                    = "output",
+                                           output_prefix                 = "capacity_growth_comparison",
+                                           verbose                       = TRUE) {
+  
+  # --------------------------------------------------------------------------
+  # Input validation
+  # --------------------------------------------------------------------------
+  
+  if (is.null(names(r_values)) || any(names(r_values) == "")) {
+    stop("r_values must be a fully named numeric vector ",
+         "(e.g., c(slow = 0.07, moderate = 0.11, fast = 0.18))")
+  }
+  if (any(r_values <= 0)) {
+    stop("All r values must be positive")
+  }
+  if (K <= g_initial) {
+    stop("K must be greater than g_initial")
+  }
+  
+  # --------------------------------------------------------------------------
+  # Iterate over growth rates
+  # --------------------------------------------------------------------------
+  
+  start_time    <- Sys.time()
+  rate_labels   <- names(r_values)
+  all_results   <- vector("list", length(r_values))
+  names(all_results) <- rate_labels
+  
+  for (i in seq_along(r_values)) {
+    
+    rate_label <- rate_labels[i]
+    r_val      <- r_values[i]
+    
+    if (verbose) {
+      cat("\n", strrep("=", 60), "\n", sep = "")
+      cat("Growth rate", i, "of", length(r_values),
+          ": '", rate_label, "' (r = ", r_val, ")\n", sep = "")
+      cat(strrep("=", 60), "\n")
+    }
+    
+    # Build CDR capacity function for this r value
+    cdr_cap_fn <- make_logistic_from_zero(
+      g_initial = g_initial,
+      K         = K,
+      r         = r_val,
+      t_start   = t_start
+    )
+    
+    # Per-rate output prefix so individual saves are identifiable
+    rate_prefix <- paste0(output_prefix, "_", rate_label)
+    
+    # Run the existing scenario comparison unchanged
+    rate_results <- run_scenario_comparison(
+      parameter_df                  = parameter_df,
+      emissions_df                  = emissions_df,
+      economic_df                   = economic_df,
+      scenarios                     = scenarios,
+      mitigation_delay_years        = mitigation_delay_years,
+      cdr_delay_years               = cdr_delay_years,
+      use_mitigation_capacity_limit = use_mitigation_capacity_limit,
+      mitigation_capacity_function  = mitigation_capacity_function,
+      use_cdr_capacity_limit        = TRUE,
+      cdr_capacity_function         = cdr_cap_fn,
+      use_parallel                  = use_parallel,
+      save_results                  = save_results,
+      output_dir                    = output_dir,
+      output_prefix                 = rate_prefix,
+      verbose                       = verbose
+    )
+    
+    # Attach the r value used to run_info for traceability
+    rate_results$run_info$r_value    <- r_val
+    rate_results$run_info$rate_label <- rate_label
+    rate_results$run_info$g_initial  <- g_initial
+    rate_results$run_info$K          <- K
+    rate_results$run_info$t_start    <- t_start
+    
+    all_results[[rate_label]] <- rate_results
+  }
+  
+  # --------------------------------------------------------------------------
+  # Combined save
+  # --------------------------------------------------------------------------
+  
+  total_time <- difftime(Sys.time(), start_time, units = "mins")
+  
+  if (verbose) {
+    cat("\n", strrep("=", 60), "\n", sep = "")
+    cat("ALL GROWTH RATES COMPLETE\n")
+    cat("Total time: ", sprintf("%.1f", total_time), " minutes\n", sep = "")
+    cat(strrep("=", 60), "\n")
+  }
+  
+  if (save_results) {
+    timestamp        <- format(Sys.time(), "%Y%m%d_%H%M%S")
+    combined_rds     <- paste0(output_prefix, "_combined_", timestamp, ".rds")
+    combined_path    <- here::here(output_dir, combined_rds)
+    saveRDS(all_results, combined_path)
+    
+    if (verbose) {
+      cat("Combined results saved to: ", combined_path, "\n", sep = "")
+    }
+  }
+  
+  return(all_results)
+}
 
 
 #' @title Save Scenario Comparison Results

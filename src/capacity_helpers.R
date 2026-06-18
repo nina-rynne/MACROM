@@ -171,13 +171,23 @@ make_logistic_from_zero <- function(g_initial, K, r, t_start) {
     stop("r must be positive (growth rate)")
   }
   
+  # Force all parameters into the closure so their values are captured by the
+  # enclosing environment rather than looked up by name at call time. This is
+  # necessary when the returned function is serialised and sent to parallel
+  # workers, which have a fresh environment where the caller's variables (e.g.
+  # cdr_t_start) are not in scope.
+  force(g_initial)
+  force(K)
+  force(r)
+  force(t_start)
+  
   # Pre-calculate the suppression factor for efficiency
   # This represents how much the initial capacity is suppressed relative to K
   suppression_factor <- (K / g_initial) - 1
   
   function(year) {
     if (year < t_start) {
-      return(0)
+      return(g_initial)
     }
     
     t <- year - t_start
@@ -273,4 +283,82 @@ make_piecewise_capacity <- function(breakpoints) {
     idx <- max(which(years <= year))
     return(capacities[idx])
   }
+}
+
+#' @title Make Zero Capacity Function
+#' @description
+#' Returns a capacity function that evaluates to zero for all years. Used with
+#' use_mitigation_capacity_limit = TRUE to eliminate mitigation as a control
+#' entirely, forcing the optimiser to rely solely on CDR. This is the cleanest
+#' way to zero mitigation without modifying the solver code.
+#'
+#' @return Function with signature function(year) returning 0 for all inputs
+#'
+#' @examples
+#' # Create a zero-capacity function
+#' zero_fn <- make_zero_capacity()
+#' zero_fn(2025)  # Returns 0
+#' zero_fn(2060)  # Returns 0
+#'
+#' # Use in scenario comparison to eliminate mitigation
+#' results <- run_scenario_comparison(
+#'   ...,
+#'   use_mitigation_capacity_limit = TRUE,
+#'   mitigation_capacity_function  = make_zero_capacity()
+#' )
+make_zero_capacity <- function() {
+  function(year) 0
+}
+
+
+#' @title Extract Capacity Growth Summary
+#' @description
+#' Pulls peak temperature and years above 1.5°C for every SSP × growth rate
+#' combination from run_capacity_growth_comparison() output into a single tidy
+#' data frame, then saves it as a timestamped CSV to the output/ directory.
+#'
+#' @param capacity_growth_results Output from run_capacity_growth_comparison()
+#' @param verbose Print progress messages (default TRUE)
+#'
+#' @return Tidy data frame with columns: ssp, growth_rate, peak_temperature,
+#'   years_above_1p5. Rows ordered by SSP then growth rate.
+#'
+#' @examples
+#' capacity_summary_df <- extract_capacity_summary(capacity_growth_results)
+extract_capacity_summary <- function(capacity_growth_results, verbose = TRUE) {
+
+  clean_scenario_names <- function(x) gsub("-Baseline$", "", x)
+
+  capacity_summary_df <- purrr::map_dfr(names(capacity_growth_results), function(rate) {
+    summary <- capacity_growth_results[[rate]]$comparison_summary
+    if (is.null(summary)) {
+      warning(sprintf("No comparison_summary found for growth rate '%s'", rate))
+      return(NULL)
+    }
+    data.frame(
+      ssp              = clean_scenario_names(summary$scenario),
+      growth_rate      = rate,
+      peak_temperature = summary$peak_temperature,
+      years_above_1p5  = summary$years_above_1p5,
+      stringsAsFactors = FALSE
+    )
+  })
+
+  growth_rate_order <- names(capacity_growth_results)
+  ssp_order         <- sort(unique(capacity_summary_df$ssp))
+
+  capacity_summary_df$growth_rate <- factor(capacity_summary_df$growth_rate,
+                                             levels = growth_rate_order)
+  capacity_summary_df$ssp         <- factor(capacity_summary_df$ssp,
+                                             levels = ssp_order)
+
+  capacity_summary_df <- capacity_summary_df[
+    order(capacity_summary_df$ssp, capacity_summary_df$growth_rate), ]
+
+  csv_filename <- paste0("capacity_summary_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".csv")
+  utils::write.csv(capacity_summary_df, here::here("output", csv_filename), row.names = FALSE)
+
+  if (verbose) cat("Capacity summary saved to output/", csv_filename, "\n")
+
+  capacity_summary_df
 }
