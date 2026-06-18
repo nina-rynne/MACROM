@@ -739,11 +739,14 @@ cdr_threshold |>
 
 min_unrecoverable <- cdr_scale_sensitivity_results$combined_results |>
   mutate(peak_temp_rounded = round(peak_temperature, 2)) |>
+  group_by(scenario, peak_temp_rounded) |>
+  summarise(any_feasible = any(feasible), .groups = "drop") |>
   group_by(scenario) |>
   summarise(
     threshold = min(peak_temp_rounded[
+      !any_feasible & 
       sapply(peak_temp_rounded, function(pt) {
-        all(!feasible[peak_temp_rounded >= pt])
+        all(!any_feasible[peak_temp_rounded >= pt])
       })
     ], na.rm = TRUE),
     .groups = "drop"
