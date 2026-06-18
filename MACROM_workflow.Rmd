@@ -473,179 +473,92 @@ comprehensive_cost_dashboard <- create_comprehensive_cost_delay_dashboard(
 print(comprehensive_cost_dashboard)
 ```
 
-# ==============================================================================
-# Current working section
-# ==============================================================================
-
 
 
 ```{r cdr_scale_sensitivity_analysis, eval=FALSE}
 # ==============================================================================
 # CDR Scale Sensitivity Analysis
 # ==============================================================================
-# Sweeps the CDR logistic scale function parameters K (carrying capacity,
-# GtCO2/year) and r (growth rate) across a user-defined grid and runs the
-# full scenario comparison for each combination. Mitigation is zeroed out so
-# that CDR is the sole control, isolating the effect of CDR scale parameters.
+# Sweeps CDR logistic parameters K (carrying capacity, GtCO2/year) and r
+# (growth rate) across a grid. Mitigation is zeroed out so CDR is the sole
+# control, isolating the effect of CDR scale on climate outcomes.
 #
 # REQUIREMENTS: Must use single parameter set (parameter_df with 1 row)
 # OUTPUTS: Saved automatically to output/ directory
-# RUNTIME: Scales with n_K × n_r × n_scenarios. A 10 × 10 grid across 5
-#          scenarios (~500 solver runs) takes approximately 30-90 minutes
-#          depending on hardware and parallel core count.
+# RUNTIME: Scales with n_K × n_r × n_scenarios (e.g. a 51 × 51 grid across
+#          5 scenarios ≈ 30-90 minutes depending on hardware)
 
-# Source required functions
 source(here::here("src", "optimal_control_capacity.R"))
 source(here::here("src", "scenario_comparison_capacity.R"))
 source(here::here("src", "capacity_helpers.R"))
 source(here::here("src", "cdr_scale_sensitivity.R"))
 
-# ==============================================================================
 # USER CHOICE: CDR K range (carrying capacity, GtCO2/year)
-# ==============================================================================
-K_min <- 25     # Minimum CDR carrying capacity (GtCO2/year)
-K_max <- 200    # Maximum CDR carrying capacity (GtCO2/year)
+K_min <- 25     # Minimum CDR carrying capacity
+K_max <- 200    # Maximum CDR carrying capacity
 n_K   <- 51     # Number of K values to test
 
-# ==============================================================================
 # USER CHOICE: CDR r range (growth rate)
-# ==============================================================================
 r_min       <- 0.02    # Minimum CDR growth rate
 r_max       <- 0.20    # Maximum CDR growth rate
 n_r         <- 51      # Number of r values to test
-r_log_scale <- FALSE   # Set TRUE for log-spaced r values (useful if r spans
-                       # more than one order of magnitude)
+r_log_scale <- FALSE   # Set TRUE for log-spaced r values
 
-# ==============================================================================
-# USER CHOICE: Fixed CDR function settings (single values, not swept)
-# ==============================================================================
+# USER CHOICE: Fixed CDR starting conditions
 g_initial <- 2      # Starting CDR deployment level (GtCO2/year)
 t_start   <- 2025   # Year CDR deployment begins
 
-# ==============================================================================
 # USER CHOICE: Scenarios to analyse
-# ==============================================================================
 scenarios_to_compare <- c("SSP1-Baseline", "SSP2-Baseline", "SSP3-Baseline",
                           "SSP4-Baseline", "SSP5-Baseline")
 
-# ==============================================================================
-# Zero out mitigation (CDR is the sole control in this analysis)
-# ==============================================================================
-# make_zero_capacity() returns a capacity function that evaluates to 0 for all
-# years. Combined with use_mitigation_capacity_limit = TRUE this forces
-# qty_mitig = 0 throughout the optimisation without modifying the solver.
-use_mitigation_capacity_limit <- TRUE
-mitigation_capacity_function  <- make_zero_capacity()
-
-# ==============================================================================
-# Build parameter grid and run sweep
-# ==============================================================================
-cdr_scale_grid <- build_cdr_scale_grid(
-  K_min       = K_min,
-  K_max       = K_max,
-  n_K         = n_K,
-  r_min       = r_min,
-  r_max       = r_max,
-  n_r         = n_r,
-  r_log_scale = r_log_scale
+cdr_scale_sensitivity_results <- run_cdr_scale_sensitivity_from_params(
+  K_min        = K_min,
+  K_max        = K_max,
+  n_K          = n_K,
+  r_min        = r_min,
+  r_max        = r_max,
+  n_r          = n_r,
+  r_log_scale  = r_log_scale,
+  g_initial    = g_initial,
+  t_start      = t_start,
+  scenarios    = scenarios_to_compare,
+  parameter_df = parameter_df[1, ],
+  emissions_df = emissions_df,
+  economic_df  = economic_df
 )
-
-cdr_scale_sensitivity_results <- run_cdr_scale_sensitivity(
-  parameter_df                  = parameter_df[1, ],
-  emissions_df                  = emissions_df,
-  economic_df                   = economic_df,
-  scenarios                     = scenarios_to_compare,
-  cdr_grid                      = cdr_scale_grid,
-  g_initial                     = g_initial,
-  t_start                       = t_start,
-  mitigation_delay_years        = 0,
-  cdr_delay_years               = 0,
-  use_mitigation_capacity_limit = use_mitigation_capacity_limit,
-  mitigation_capacity_function  = mitigation_capacity_function,
-  use_parallel                  = TRUE,
-  save_results                  = TRUE,
-  verbose                       = TRUE
-)
-
-# Display summary
-cat("\n=== CDR SCALE SENSITIVITY ANALYSIS COMPLETE ===\n")
-cat("Grid:       ", nrow(cdr_scale_grid), "combinations\n")
-cat("Scenarios:  ", length(scenarios_to_compare), "\n")
-cat("Total runs: ", nrow(cdr_scale_grid) * length(scenarios_to_compare), "\n")
-cat("Feasible:   ", cdr_scale_sensitivity_results$summary_stats$n_feasible, "/",
-    cdr_scale_sensitivity_results$summary_stats$n_total_rows, "\n")
-
 ```
 
-
 ```{r cdr_scale_sensitivity_visualisation, eval=FALSE}
-
 # ==============================================================================
 # CDR Scale Sensitivity Visualisation
 # ==============================================================================
-# Create heatmap dashboards showing how CDR carrying capacity (K) and growth
+# Creates heatmap dashboards showing how CDR carrying capacity (K) and growth
 # rate (r) affect climate outcomes across all SSP scenarios.
 # OUTPUTS: Saved automatically to figs/ directory
 
-# Source visualisation functions
 source(here::here("src", "cdr_scale_sensitivity_visualisation.R"))
 
-# Check results exist
 if (!exists("cdr_scale_sensitivity_results")) {
   stop("CDR scale sensitivity results not found. ",
        "Please run the cdr_scale_sensitivity_analysis chunk first.")
 }
 
-# Optional: add abatement cost column if cost visualisation is needed
-# (mirrors the delayed_deployment_visualisation chunk convention)
-# cdr_scale_sensitivity_results$combined_results <-
-#   cdr_scale_sensitivity_results$combined_results %>%
-#   mutate(abatement_cost = mitig_cost + remov_cost)
-
-# ==============================================================================
-# USER CHOICE: Variables to plot
-# ==============================================================================
-# Temperature outcomes (primary analysis):
-#   c("peak_temperature", "years_above_1p5")
-# Cost outcomes (requires abatement_cost column above):
-#   c("total_cost", "abatement_cost", "temp_cost")
-
-# Create temperature dashboard
-# cdr_scale_dashboards <- create_cdr_scale_temperature_dashboards(
-#   sensitivity_results   = cdr_scale_sensitivity_results,
-#   add_contours          = FALSE,
-#   add_threshold_line    = FALSE,
-#   threshold_value_temp  = 1.5,   # can omit — this is the default
-#   threshold_value_years = 0.5,   # can omit — this is the default
-#   show_infeasible       = FALSE,
-#   width                 = 297,
-#   height                = 210,
-#   verbose               = TRUE
-# )
-
+# Combined temperature heatmap (peak temperature and years above 1.5°C)
 cdr_scale_dashboards_combined <- create_cdr_scale_temperature_dashboards_combined(
-  sensitivity_results    = cdr_scale_sensitivity_results,
-  add_contours           = FALSE,
-  add_threshold_line     = FALSE,
-  threshold_value_temp   = 1.5,
-  threshold_value_years  = 0.5,
-  show_infeasible        = FALSE,
-  width                  = 297,
-  height                 = 140,
-  save_plot              = TRUE,
-  verbose                = TRUE
+  sensitivity_results   = cdr_scale_sensitivity_results,
+  add_contours          = FALSE,
+  add_threshold_line    = FALSE,
+  threshold_value_temp  = 1.5,
+  threshold_value_years = 0.5,
+  show_infeasible       = FALSE,
+  width                 = 297,
+  height                = 140,
+  save_plot             = TRUE,
+  verbose               = TRUE
 )
 
-# cdr_threshold_plot <- create_cdr_scale_threshold_plot(
-#   sensitivity_results   = cdr_scale_sensitivity_results,
-#   threshold_value_temp  = 1.5,
-#   threshold_value_years = 0.5,
-#   save_plot             = TRUE,
-#   width                 = 190,
-#   height                = 100,
-#   verbose               = TRUE
-# )
-
+# Outcome plot distinguishing recoverable and unrecoverable parameter space
 cdr_outcome_plot <- create_cdr_scale_outcome_plot(
   sensitivity_results = cdr_scale_sensitivity_results,
   threshold           = 1.505,
@@ -656,264 +569,127 @@ cdr_outcome_plot <- create_cdr_scale_outcome_plot(
   height              = 100,
   verbose             = TRUE
 )
-
-# Display the dashboard
-#print(cdr_scale_dashboards)
 ```
 
 ```{r cdr_scale_data_results}
+# ==============================================================================
+# CDR Scale Sensitivity Data Extraction
+# ==============================================================================
+# Extracts three summary tables from the sensitivity results:
+#   - feasible_min: lowest r and lowest K achieving recovery per SSP
+#   - cdr_threshold: CDR units at the recoverable/unrecoverable boundary
+#   - min_unrecoverable: peak temperature above which recovery is always impossible
+# OUTPUTS: Saved automatically to output/ directory
 
-g <- function(t, r, K, g_initial = 2, t0 = 0) {
-  K / (1 + (K / g_initial - 1) * exp(-r * (t - t0)))
+source(here::here("src", "cdr_scale_data_extraction.R"))
+
+if (!exists("cdr_scale_sensitivity_results")) {
+  stop("CDR scale sensitivity results not found. ",
+       "Please run the cdr_scale_sensitivity_analysis chunk first.")
 }
 
-feasible_min <- bind_rows(
-  # Rows selected by minimum r
-  cdr_scale_sensitivity_results$combined_results |>
-    filter(feasible == TRUE, final_temperature <= 1.501, peak_temperature >= 1.51) |>
-    group_by(scenario) |>
-    slice_min(order_by = r, n = 1, with_ties = FALSE) |>
-    mutate(selected_by = "min_r") |>
-    select(scenario, selected_by, r, K, final_temperature, peak_temperature, years_above_1p5, total_cdr_units, total_cost),
-  
-  # Rows selected by minimum K
-  cdr_scale_sensitivity_results$combined_results |>
-    filter(feasible == TRUE, final_temperature <= 1.501, peak_temperature >= 1.51) |>
-    group_by(scenario) |>
-    slice_min(order_by = K, n = 1, with_ties = FALSE) |>
-    mutate(selected_by = "min_K") |>
-    select(scenario, selected_by, r, K, final_temperature, peak_temperature, years_above_1p5, total_cdr_units, total_cost)
-) |>
-  rowwise() |>
-  mutate(AUC = integrate(g, lower = 0, upper = 75, r = r, K = K)$value) |>
-  ungroup() |>
-  arrange(scenario, selected_by)
+# USER CHOICE: Thresholds defining a genuine overshoot and a feasible recovery
+peak_temp_threshold  <- 1.51    # Minimum peak temperature to count as an overshoot
+final_temp_threshold <- 1.501   # Maximum final temperature to count as recovered
 
-print(feasible_min)
-
-write.csv(feasible_min, here("output", "feasible_min.csv"), row.names = FALSE)
-
-cdr_threshold <- bind_rows(
-  # Maximum CDR units in failed runs (minimum needed to potentially recover)
-  cdr_scale_sensitivity_results$combined_results |>
-    filter(feasible == FALSE) |>
-    group_by(scenario) |>
-    summarise(
-      max_cdr_unrecoverable = max(total_cdr_units, na.rm = TRUE),
-      .groups = "drop"
-    ),
-  
-  # Minimum CDR units in successful runs (for cross-reference)
-  cdr_scale_sensitivity_results$combined_results |>
-    filter(feasible == TRUE) |>
-    group_by(scenario) |>
-    summarise(
-      min_cdr_recoverable = min(total_cdr_units, na.rm = TRUE),
-      .groups = "drop"
-    )
-) |>
-  group_by(scenario) |>
-  summarise(across(everything(), ~ first(na.omit(.))), .groups = "drop") |>
-  arrange(scenario)
-
-print(cdr_threshold)
-
-write.csv(cdr_threshold, here("output", "cdr_threshold.csv"), row.names = FALSE)
-
-cumulative_emissions <- emissions_df |>
-  filter(Year >= 2025) |>
-  group_by(Scenario) |>
-  summarise(
-    cumulative_emissions = sum(Value, na.rm = TRUE),
-    .groups = "drop"
-  ) |>
-  arrange(Scenario)
-
-print(cumulative_emissions)
-
-cdr_threshold |>
-  left_join(cumulative_emissions, by = c("scenario" = "Scenario")) |>
-  mutate(expected_cdr = cumulative_emissions - 650,
-         difference = max_cdr_unrecoverable - expected_cdr)
-
-
-min_unrecoverable <- cdr_scale_sensitivity_results$combined_results |>
-  mutate(peak_temp_rounded = round(peak_temperature, 2)) |>
-  group_by(scenario, peak_temp_rounded) |>
-  summarise(any_feasible = any(feasible), .groups = "drop") |>
-  group_by(scenario) |>
-  summarise(
-    threshold = min(peak_temp_rounded[
-      !any_feasible & 
-      sapply(peak_temp_rounded, function(pt) {
-        all(!any_feasible[peak_temp_rounded >= pt])
-      })
-    ], na.rm = TRUE),
-    .groups = "drop"
-  ) |>
-  arrange(scenario)
-
-print(min_unrecoverable)
-
+cdr_scale_metrics <- extract_cdr_scale_metrics(
+  sensitivity_results = cdr_scale_sensitivity_results,
+  emissions_df        = emissions_df,
+  peak_temp_min       = peak_temp_threshold,
+  final_temp_max      = final_temp_threshold,
+  g_initial           = g_initial,
+  verbose             = TRUE
+)
 ```
-
-
-
-
-# ==============================================================================
-# Current section end
-# ==============================================================================
-
 
 
 ```{r scenario_comparison_analysis_capacity, eval=FALSE}
 # ==============================================================================
 # Scenario Comparison Analysis with Capacity Constraints
 # ==============================================================================
-# Compare optimal control solutions across different SSP baseline scenarios
-# with realistic deployment constraints on both mitigation and CDR.
+# Compares optimal control solutions across SSP scenarios with realistic
+# deployment constraints enforced on mitigation and CDR via logistic curves.
 #
 # REQUIREMENTS: Must use single parameter set (parameter_df with 1 row)
 # OUTPUTS: Saved automatically to output/ directory
 # RUNTIME: ~5-15 minutes for 5 scenarios with parallel processing
 
-# Source required functions
 source(here::here("src", "optimal_control_capacity.R"))
 source(here::here("src", "scenario_comparison_capacity.R"))
 source(here::here("src", "capacity_helpers.R"))
 
-# USER CHOICE: Select which SSP scenarios to compare
-scenarios_to_compare <- c("SSP1-Baseline", "SSP2-Baseline", "SSP3-Baseline", 
+# USER CHOICE: SSP scenarios to compare
+scenarios_to_compare <- c("SSP1-Baseline", "SSP2-Baseline", "SSP3-Baseline",
                           "SSP4-Baseline", "SSP5-Baseline")
 
 # USER CHOICE: Delay settings (typically keep at 0 for baseline comparison)
 mitigation_delay <- 0  # Years before mitigation begins
 cdr_delay        <- 0  # Years before CDR deployment begins
 
-# ==============================================================================
-# USER CHOICE: Mitigation Capacity Constraint
-# ==============================================================================
-# Enforces realistic ramp-up limits on mitigation deployment. This prevents
-# unrealistic scenarios where mitigation jumps instantly to high levels.
-# Examples: early coal/gas phase-out constraints, infrastructure buildout limits,
-# political economy barriers to rapid emissions reductions.
+# USER CHOICE: Mitigation capacity constraint
+# Set use_mitigation_capacity_limit = FALSE to allow unconstrained mitigation.
+# make_zero_capacity() eliminates mitigation so CDR is the sole control.
+use_mitigation_capacity_limit <- TRUE
+mitigation_capacity_function  <- make_zero_capacity()
 
-use_mitigation_capacity_limit <- TRUE  # Set TRUE to activate
-mitigation_capacity_function <- make_zero_capacity()
-
-# ==============================================================================
-# USER CHOICE: CDR Capacity Constraint
-# ==============================================================================
-# Enforces realistic ramp-up limits on CDR deployment. This prevents unrealistic
-# spikes (e.g., 40 GtCO2/year immediately). CDR must start from near-zero and
-# grow based on technology learning, infrastructure, and investment.
-
-use_cdr_capacity_limit <- TRUE  # Set TRUE to activate
-
-# CDR with three-phase deployment
-cdr_capacity_function <- make_logistic_from_zero(
-  g_initial = 2,  # Current CDR levels
-  K = 100,            # Maximum realistic capacity
-  r = 0.07,          # Moderate acceleration
-  t_start = 2025
+# USER CHOICE: CDR capacity constraint
+# Logistic S-curve starting from current CDR levels and growing to K (GtCO2/year).
+# Increase r for faster ramp-up; increase K for a higher ceiling.
+use_cdr_capacity_limit <- TRUE
+cdr_capacity_function  <- make_logistic_from_zero(
+  g_initial = 2,      # Current CDR deployment level (GtCO2/year)
+  K         = 100,    # Maximum CDR capacity (GtCO2/year)
+  r         = 0.07,   # Growth rate (0.05 = slow, 0.10 = fast)
+  t_start   = 2025
 )
 
-# ==============================================================================
-# Run scenario comparison with capacity constraints
-# ==============================================================================
-# Both mitigation and CDR constraints can be active simultaneously.
-# The solver will optimize within the feasible deployment space defined
-# by the capacity functions.
-
+# Run scenario comparison
 scenario_comparison_results <- run_scenario_comparison(
-  parameter_df                   = parameter_df[1, ],    # Must be single row
-  emissions_df                   = emissions_df,
-  economic_df                    = economic_df,
-  scenarios                      = scenarios_to_compare,
-  mitigation_delay_years         = mitigation_delay,
-  cdr_delay_years                = cdr_delay,
-  use_mitigation_capacity_limit  = use_mitigation_capacity_limit,  # Mitigation constraint
-  mitigation_capacity_function   = mitigation_capacity_function,    # Mitigation capacity curve
-  use_cdr_capacity_limit         = use_cdr_capacity_limit,          # CDR constraint
-  cdr_capacity_function          = cdr_capacity_function,           # CDR capacity curve
-  use_parallel                   = TRUE,                            # Parallel processing
-  save_results                   = TRUE,                            # Save to output/
-  verbose                        = FALSE                            # Progress reporting
+  parameter_df                  = parameter_df[1, ],
+  emissions_df                  = emissions_df,
+  economic_df                   = economic_df,
+  scenarios                     = scenarios_to_compare,
+  mitigation_delay_years        = mitigation_delay,
+  cdr_delay_years               = cdr_delay,
+  use_mitigation_capacity_limit = use_mitigation_capacity_limit,
+  mitigation_capacity_function  = mitigation_capacity_function,
+  use_cdr_capacity_limit        = use_cdr_capacity_limit,
+  cdr_capacity_function         = cdr_capacity_function,
+  use_parallel                  = TRUE,
+  save_results                  = TRUE,
+  verbose                       = FALSE
 )
 
-# Display summary
 if (!is.null(scenario_comparison_results$comparison_summary)) {
   print(scenario_comparison_results$comparison_summary)
 }
-
-# ==============================================================================
-# Interpretation Notes
-# ==============================================================================
-# 
-# WHEN 1.5°C IS IMPOSSIBLE:
-# If capacity constraints make returning to 1.5°C impossible, the solver returns
-# the "best" result it can find - the solution that gets closest to the target
-# cumulative emissions. Check these fields to assess the result:
-#
-#   - final_temperature: Actual temperature achieved (may exceed 1.5°C)
-#   - emission_gap: How close to target emissions (GtCO2)
-#   - temperature_anomaly: Full time series showing overshoot trajectory
-#
-# CAPACITY BINDING INDICATORS:
-# To see if capacity constraints are actively limiting deployment:
-#
-#   - Plot qty_mitig vs mitigation_capacity_function(years)
-#   - Plot qty_remov vs cdr_capacity_function(years)
-#   - If they track closely, the constraint is binding
-#
-# OVERSHOOT DYNAMICS:
-# Capacity constraints typically force temporary temperature overshoot because
-# deployment can't scale fast enough to avoid it. The solver minimizes total
-# cost subject to the deployment constraints, which may mean accepting overshoot.
-#
 ```
 
 ```{r multi_scenario_comparison_analysis_capacity, eval=FALSE}
 # ==============================================================================
-# Scenario Comparison Analysis with Capacity Constraints
+# Multi-Growth-Rate Scenario Comparison with Capacity Constraints
 # ==============================================================================
-# Compare optimal control solutions across different SSP baseline scenarios
-# and CDR growth rates, with realistic deployment constraints on both
-# mitigation and CDR.
-#
-# This chunk sweeps over a named set of CDR logistic growth rates (r), running
-# the full 5-SSP scenario comparison once per rate. Results are assembled into
-# a single nested list keyed by rate label, then saved as individual per-rate
-# RDS files and one combined RDS.
+# Sweeps over a set of named CDR growth rates (r), running the full SSP scenario
+# comparison once per rate. Results are saved as per-rate and combined RDS files.
 #
 # REQUIREMENTS: Must use single parameter set (parameter_df with 1 row)
 # OUTPUTS: Saved automatically to output/ directory
-# RUNTIME: ~5-15 minutes per growth rate with parallel processing
-#          (e.g., 3 rates × 5 scenarios ≈ 15-45 minutes total)
+# RUNTIME: ~5-15 minutes per growth rate (e.g. 3 rates × 5 SSPs ≈ 15-45 min)
 
-# Source required functions
 source(here::here("src", "optimal_control_capacity.R"))
 source(here::here("src", "scenario_comparison_capacity.R"))
 source(here::here("src", "capacity_helpers.R"))
 
-# ==============================================================================
 # USER CHOICE: SSP scenarios to compare
-# ==============================================================================
 scenarios_to_compare <- c("SSP1-Baseline", "SSP2-Baseline", "SSP3-Baseline",
                           "SSP4-Baseline", "SSP5-Baseline")
 
-# ==============================================================================
 # USER CHOICE: Delay settings (typically keep at 0 for baseline comparison)
-# ==============================================================================
 mitigation_delay <- 0  # Years before mitigation begins
 cdr_delay        <- 0  # Years before CDR deployment begins
 
-# ==============================================================================
 # USER CHOICE: CDR growth rates to compare
-# ==============================================================================
-# Each entry is a named r value passed to make_logistic_from_zero().
-# The name becomes the key in the results list and in saved filenames.
-# Add, remove, or rename entries freely — the wrapper iterates over all of them.
+# Each entry is a named r value. The name becomes the key in results and filenames.
 # Common values: slow ≈ 0.05, moderate ≈ 0.07, fast ≈ 0.11
 cdr_r_values <- c(
   slow     = 0.05,
@@ -921,27 +697,19 @@ cdr_r_values <- c(
   fast     = 0.11
 )
 
-# ==============================================================================
 # USER CHOICE: Shared CDR logistic parameters (fixed across all growth rates)
-# ==============================================================================
 cdr_g_initial <- 2     # Starting CDR deployment level (GtCO2/year)
 cdr_K         <- 100   # Maximum CDR carrying capacity (GtCO2/year)
 cdr_t_start   <- 2025  # Year CDR deployment begins
 
-# ==============================================================================
 # USER CHOICE: Mitigation capacity constraint
-# ==============================================================================
-# Set use_mitigation_capacity_limit = FALSE to allow unconstrained mitigation.
-# The default (make_zero_capacity()) eliminates mitigation entirely so that CDR
-# is the sole control — change to another capacity function if needed.
+# make_zero_capacity() eliminates mitigation so CDR is the sole control.
 use_mitigation_capacity_limit <- TRUE
 mitigation_capacity_function  <- make_zero_capacity()
 
-# ==============================================================================
 # Run comparison across all growth rates
-# ==============================================================================
 capacity_growth_results <- run_capacity_growth_comparison(
-  parameter_df                  = parameter_df[1, ],         # Must be single row
+  parameter_df                  = parameter_df[1, ],
   emissions_df                  = emissions_df,
   economic_df                   = economic_df,
   scenarios                     = scenarios_to_compare,
@@ -953,14 +721,12 @@ capacity_growth_results <- run_capacity_growth_comparison(
   cdr_delay_years               = cdr_delay,
   use_mitigation_capacity_limit = use_mitigation_capacity_limit,
   mitigation_capacity_function  = mitigation_capacity_function,
-  use_parallel                  = TRUE,                      # Parallel within each rate
-  save_results                  = TRUE,                      # Save per-rate + combined RDS
-  verbose                       = TRUE                       # Progress reporting
+  use_parallel                  = TRUE,
+  save_results                  = TRUE,
+  verbose                       = TRUE
 )
 
-# ==============================================================================
-# Quick summary across all rates
-# ==============================================================================
+# Display summary across all growth rates
 for (rate in names(capacity_growth_results)) {
   cat("\n--- Growth rate:", rate, "---\n")
   summary_df <- capacity_growth_results[[rate]]$comparison_summary
@@ -969,71 +735,43 @@ for (rate in names(capacity_growth_results)) {
                          "total_cdr_units", "years_above_1p5")])
   }
 }
-
-# ==============================================================================
-# Interpretation Notes
-# ==============================================================================
-#
-# INDEXING INTO RESULTS:
-# capacity_growth_results is a named list keyed by the rate labels you defined
-# in cdr_r_values. Each element is the full output of run_scenario_comparison().
-#
-#   capacity_growth_results$moderate$scenario_results[["SSP3-Baseline"]]
-#   capacity_growth_results$fast$comparison_summary
-#
-# WHEN 1.5°C IS IMPOSSIBLE:
-# If capacity constraints make returning to 1.5°C impossible, the solver returns
-# the best feasible result. Check:
-#   - final_temperature: Actual temperature achieved (may exceed 1.5°C)
-#   - emission_gap: Distance from target emissions (GtCO2)
-#   - temperature_anomaly: Full time series showing overshoot trajectory
-#
-# CAPACITY BINDING INDICATORS:
-# To check whether the CDR constraint is actively limiting deployment:
-#   - Plot qty_remov vs the capacity function evaluated over years
-#   - If they track closely, the constraint is binding for that SSP/rate combo
-#
 ```
 
 ```{r lowest_comparison_analysis, eval=FALSE}
 # ==============================================================================
 # Lowest Comparison Analysis
 # ==============================================================================
-# Compare optimal control solutions for SSP-specific (r, K) parameter pairs.
-# Unlike multi_scenario_comparison_analysis_capacity, which sweeps a shared set
-# of r values uniformly across all SSPs, this chunk assigns specific CDR logistic
-# parameter combinations to each SSP individually. Pairs are exact — if you
-# supply two (r, K) vectors for an SSP you get those two runs, not a grid.
+# Runs optimal control for SSP-specific (r, K) parameter pairs. Unlike the
+# multi-growth-rate chunk above, each SSP receives its own set of exact (r, K)
+# combinations rather than a shared sweep — useful for targeted analysis of
+# minimum feasible CDR parameters identified from the sensitivity grid.
 #
 # REQUIREMENTS: Must use single parameter set (parameter_df with 1 row)
 # OUTPUTS: Saved automatically to output/ as a single combined RDS
 # RUNTIME: ~5-15 minutes per (SSP, pair) with parallel processing
 
-# Source required functions
 source(here::here("src", "lowest_comparison.R"))
 source(here::here("src", "optimal_control_capacity.R"))
 source(here::here("src", "scenario_comparison_capacity.R"))
 source(here::here("src", "capacity_helpers.R"))
 
-# ==============================================================================
 # USER CHOICE: SSP-specific (r, K) parameter pairs
-# ==============================================================================
-# Each top-level name must match a scenario in emissions_df exactly.
-# Each SSP gets a list of c(r = ..., K = ...) vectors — one per run.
-# Pairs are labelled automatically: pair_1, pair_2, ...
+# Each SSP name must match a scenario in emissions_df exactly.
+# Each SSP receives a list of c(r = ..., K = ...) vectors, one per run.
+# Pairs are labelled automatically as pair_1, pair_2, ...
 # K must be greater than cdr_g_initial for every pair.
 ssp_params <- list(
   "SSP1-Baseline" = list(
     c(r = 0.045, K = 95),
-    c(r = 0.07, K = 25)
+    c(r = 0.07,  K = 25)
   ),
   "SSP2-Baseline" = list(
-    c(r = 0.06, K = 161.5),
-    c(r = 0.11, K = 42.5)
+    c(r = 0.06,  K = 161.5),
+    c(r = 0.11,  K = 42.5)
   ),
   "SSP3-Baseline" = list(
     c(r = 0.063, K = 144),
-    c(r = 0.128,  K = 42.5)
+    c(r = 0.128, K = 42.5)
   ),
   "SSP4-Baseline" = list(
     c(r = 0.052, K = 182.5),
@@ -1045,27 +783,20 @@ ssp_params <- list(
   )
 )
 
-# ==============================================================================
-# USER CHOICE: Shared CDR logistic parameters (fixed across all SSPs and pairs)
-# ==============================================================================
+# USER CHOICE: Shared CDR starting conditions (fixed across all SSPs and pairs)
 cdr_g_initial <- 2     # Starting CDR deployment level (GtCO2/year)
 cdr_t_start   <- 2025  # Year CDR deployment begins
 
-# ==============================================================================
 # USER CHOICE: Delay settings
-# ==============================================================================
 mitigation_delay <- 0  # Years before mitigation begins
 cdr_delay        <- 0  # Years before CDR deployment begins
 
-# ==============================================================================
 # USER CHOICE: Mitigation capacity constraint
-# ==============================================================================
+# make_zero_capacity() eliminates mitigation so CDR is the sole control.
 use_mitigation_capacity_limit <- TRUE
 mitigation_capacity_function  <- make_zero_capacity()
 
-# ==============================================================================
 # Run analysis across all SSPs and pairs
-# ==============================================================================
 lowest_results <- run_lowest_comparison(
   parameter_df                  = parameter_df[1, ],
   emissions_df                  = emissions_df,
@@ -1082,9 +813,7 @@ lowest_results <- run_lowest_comparison(
   verbose                       = TRUE
 )
 
-# ==============================================================================
-# Quick summary across all SSPs and pairs
-# ==============================================================================
+# Display summary across all SSPs and pairs
 for (ssp in names(lowest_results)) {
   cat("\n---", ssp, "---\n")
   for (pair in names(lowest_results[[ssp]])) {
@@ -1097,156 +826,89 @@ for (ssp in names(lowest_results)) {
     }
   }
 }
-
-# ==============================================================================
-# Interpretation Notes
-# ==============================================================================
-#
-# INDEXING INTO RESULTS:
-# lowest_results is a nested list keyed first by SSP, then by pair label.
-# Pair labels are auto-assigned as pair_1, pair_2, ... in the order you listed
-# the vectors in ssp_params.
-#
-#   lowest_results[["SSP3-Baseline"]][["pair_1"]]$comparison_summary
-#   lowest_results[["SSP3-Baseline"]][["pair_2"]]$scenario_results[["SSP3-Baseline"]]
-#
-# CHECKING WHICH PARAMETERS EACH PAIR USED:
-# The r and K values are not stored inside the result leaves — record them from
-# your ssp_params definition above, or add them manually to run_info if needed.
-#
-# PLOTTING ALL RUNS TOGETHER:
-# Use purrr::map_dfr to flatten across SSPs and pairs:
-#   purrr::map_dfr(names(lowest_results), function(ssp) {
-#     purrr::map_dfr(names(lowest_results[[ssp]]), function(pair) {
-#       s <- lowest_results[[ssp]][[pair]]$comparison_summary
-#       dplyr::mutate(s, pair = pair)
-#     }, .id = "pair_label")
-#   }, .id = "ssp")
-#
 ```
 
 ```{r lowest_comparison_visualisation, eval=FALSE}
 # ==============================================================================
-# Lowest Scenario Comparison Visualisation
+# Lowest Comparison Visualisation
 # ==============================================================================
-# Creates the 2-row × N-column dashboard (CDR top, temperature bottom)
-# comparing results across all SSPs and parameter pairs in lowest_results.
-# Each column = one SSP; within each panel, pair_1 and pair_2 are shown as
-# different linetypes ("Lowest growth rate" / "Lowest maximum capacity").
+# Creates a 2-row × N-column dashboard comparing results across all SSPs and
+# parameter pairs: CDR deployment (top row) and temperature trajectories
+# (bottom row). pair_1 and pair_2 are shown as different linetypes.
 # OUTPUTS: Saved automatically to figs/ directory
 
-# Source visualisation functions
 source(here::here("src", "lowest_analysis_dashboard.R"))
 
-# Check results exist
 if (!exists("lowest_results")) {
-  stop("lowest_results not found. ",
-       "Please run the lowest_comparison_analysis chunk first. ",
-       "Alternatively, reload a saved RDS: ",
-       "lowest_results <- readRDS(here::here('output', 'your_file.rds'))")
+  stop("lowest_results not found. Please run the lowest_comparison_analysis chunk first.")
 }
 
-# Create and save the dashboard
+# USER CHOICE: Dashboard display options
+# show_capacity_limit = TRUE overlays the CDR capacity curve on the CDR panel.
+# Pass the same ssp_params, cdr_g_initial, and cdr_t_start used during analysis
+# so capacity curves can be reconstructed (even when reloading from an RDS file).
 lowest_dashboard <- create_lowest_comparison_dashboard(
   lowest_results      = lowest_results,
   show_capacity_limit = TRUE,
-  # Required when show_capacity_limit = TRUE — pass the same values used in
-  # lowest_comparison_analysis so the capacity curves can always be reconstructed
-  # even when loading results from an older RDS file
   ssp_params          = ssp_params,
   g_initial           = cdr_g_initial,
   t_start             = cdr_t_start,
   save_plot           = TRUE,
   width               = 297,   # A4 landscape width (mm)
-  height              = 210,   # Adjust to taste
+  height              = 210,
   verbose             = TRUE
 )
 
 print(lowest_dashboard)
 ```
 
-```{r extract_capacity_summary}
+```{r extract_capacity_summary, eval=FALSE}
 # ==============================================================================
-# Extract Key Metrics from Capacity Growth Results
+# Extract Capacity Growth Summary
 # ==============================================================================
 # Pulls peak temperature and years above 1.5°C for every SSP × growth rate
-# combination into a single tidy data frame.
+# combination into a tidy data frame and saves it as a timestamped CSV.
 #
-# REQUIRES: capacity_growth_results (output of run_capacity_growth_comparison())
+# REQUIRES: capacity_growth_results (from multi_scenario_comparison_analysis_capacity)
+
+source(here::here("src", "capacity_helpers.R"))
 
 if (!exists("capacity_growth_results")) {
   stop("capacity_growth_results not found. ",
-       "Please run the scenario_comparison_analysis_capacity chunk first, or ",
-       "reload a saved RDS: ",
-       "capacity_growth_results <- readRDS(here::here('output', 'your_file.rds'))")
+       "Please run the multi_scenario_comparison_analysis_capacity chunk first.")
 }
 
-# Helper to strip "-Baseline" suffix from scenario names
-clean_scenario_names <- function(x) gsub("-Baseline$", "", x)
+capacity_summary_df <- extract_capacity_summary(
+  capacity_growth_results = capacity_growth_results,
+  verbose                 = TRUE
+)
 
-# Build tidy data frame — one row per SSP × growth rate combination
-capacity_summary_df <- purrr::map_dfr(names(capacity_growth_results), function(rate) {
-
-  summary <- capacity_growth_results[[rate]]$comparison_summary
-
-  if (is.null(summary)) {
-    warning(sprintf("No comparison_summary found for growth rate '%s'", rate))
-    return(NULL)
-  }
-
-  data.frame(
-    ssp              = clean_scenario_names(summary$scenario),
-    growth_rate      = rate,
-    peak_temperature = summary$peak_temperature,
-    years_above_1p5  = summary$years_above_1p5,
-    stringsAsFactors = FALSE
-  )
-})
-
-# Order rows by SSP then growth rate
-growth_rate_order <- names(capacity_growth_results)
-ssp_order         <- sort(unique(capacity_summary_df$ssp))
-
-capacity_summary_df$growth_rate <- factor(capacity_summary_df$growth_rate,
-                                           levels = growth_rate_order)
-capacity_summary_df$ssp         <- factor(capacity_summary_df$ssp,
-                                           levels = ssp_order)
-
-capacity_summary_df <- capacity_summary_df[
-  order(capacity_summary_df$ssp, capacity_summary_df$growth_rate), ]
-
-csv_filename <- paste0("capacity_summary_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".csv")
-write.csv(capacity_summary_df, here::here("output", csv_filename), row.names = FALSE)
-
+print(capacity_summary_df)
 ```
 
 ```{r scenario_comparison_visualisation_capacity, eval=FALSE}
 # ==============================================================================
 # Capacity Scenario Comparison Visualisation
 # ==============================================================================
-# Creates the 10-panel SSP-faceted figure (2 rows × 5 columns) comparing
-# temperature trajectories and CDR strategies across growth rates.
+# Creates a 2-row × 5-column SSP-faceted figure comparing temperature
+# trajectories and CDR deployment across growth rates.
 # OUTPUTS: Saved automatically to figs/ directory
 
-# Source visualisation functions
 source(here::here("src", "scenario_comparison_capacity_visualisation.R"))
 
-# Check results exist
 if (!exists("capacity_growth_results")) {
   stop("Capacity growth results not found. ",
-       "Please run the scenario_comparison_analysis_capacity chunk first. ",
-       "Alternatively, reload a saved RDS: ",
-       "capacity_growth_results <- readRDS(here::here('output', 'your_file.rds'))")
+       "Please run the multi_scenario_comparison_analysis_capacity chunk first.")
 }
 
-# Create and save the 10-panel dashboard
+# USER CHOICE: Dashboard display options
 capacity_dashboard <- create_capacity_scenario_comparison_dashboard(
-  capacity_results = capacity_growth_results,
+  capacity_results    = capacity_growth_results,
   show_capacity_limit = FALSE,
-  save_plot        = TRUE,
-  width            = 297,   # A4 landscape width (mm)
-  height           = 210,   # Adjust to taste
-  verbose          = TRUE
+  save_plot           = TRUE,
+  width               = 297,   # A4 landscape width (mm)
+  height              = 210,
+  verbose             = TRUE
 )
 
 print(capacity_dashboard)

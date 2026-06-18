@@ -1,8 +1,8 @@
 # MACROM User Guide
 
-**Version:** 1.0.0  
-**Last Updated:** January 2026  
-**For:** MACROM v1.0.0
+**Version:** 2.0.0  
+**Last Updated:** June 2026  
+**For:** MACROM v2.0.0
 
 This guide provides comprehensive instructions for using MACROM (Mitigation and Carbon Removal Optimisation Model).
 
@@ -20,7 +20,7 @@ This guide provides comprehensive instructions for using MACROM (Mitigation and 
 8. [Customisation Options](#customisation-options)
 9. [Understanding Outputs](#understanding-outputs)
 10. [Troubleshooting](#troubleshooting)
-12. [Frequently Asked Questions](#frequently-asked-questions)
+11. [Frequently Asked Questions](#frequently-asked-questions)
 
 ---
 
@@ -91,7 +91,7 @@ install.packages(c("lhs", "iterators"))
 
 # Visualisation
 install.packages(c("ggplot2", "cowplot", "patchwork", "viridisLite", 
-                   "viridis", "colorspace", "scales"))
+                   "viridis", "colorspace", "scales", "metR", "gridExtra"))
 ```
 
 **Or install all at once:**
@@ -99,7 +99,8 @@ install.packages(c("ggplot2", "cowplot", "patchwork", "viridisLite",
 packages <- c("dplyr", "tidyr", "purrr", "tidyverse", "readr", "here", 
               "yaml", "Cairo", "parallel", "foreach", "doParallel", 
               "lhs", "iterators", "ggplot2", "cowplot", "patchwork", 
-              "viridisLite", "viridis", "colorspace", "scales")
+              "viridisLite", "viridis", "colorspace", "scales",
+              "metR", "gridExtra")
 install.packages(packages)
 ```
 
@@ -129,16 +130,25 @@ MACROM/
 ├── figs/                   # Generated figures and visualisations
 ├── output/                 # Analysis outputs (RDS, CSV)
 └── src/                    # Source code (R functions)
+    ├── capacity_helpers.R
+    ├── cdr_scale_data_extraction.R
+    ├── cdr_scale_sensitivity.R
+    ├── cdr_scale_sensitivity_visualisation.R
     ├── data_extraction.R
     ├── data_preparation.R
     ├── delayed_deployment.R
     ├── delayed_deployment_visualisation.R
     ├── latin_hypercube_sampling.R
+    ├── lowest_analysis_dashboard.R
+    ├── lowest_comparison.R
     ├── model_parameters.R
+    ├── optimal_control_capacity.R
     ├── optimal_control_core.R
     ├── parameter_importance.R
     ├── parameter_importance_visualisation.R
     ├── scenario_comparison.R
+    ├── scenario_comparison_capacity.R
+    ├── scenario_comparison_capacity_visualisation.R
     └── scenario_comparison_visualisation.R
 ```
 
@@ -174,6 +184,8 @@ MACROM/
 - All 5 SSP scenarios with fixed parameters: 10-20 minutes
 - Parameter sensitivity (20,000 samples, 1 scenario): 1-3 hours
 - Delayed deployment analysis (5 scenarios): 30-60 minutes
+- CDR scale sensitivity (51 × 51 grid, 5 scenarios): 30-90 minutes
+- Capacity-constrained comparison (3 growth rates, 5 scenarios): 15-45 minutes
 
 **Note:** Runtimes vary significantly based on hardware and whether parallel processing is enabled.
 
@@ -198,9 +210,12 @@ The workflow consists of sequential chunks that must be run in order:
    - Latin Hypercube Sampling (multiple parameter sets)
 
 3. **Analysis** (choose one or more)
-   - Scenario comparison
+   - Scenario comparison (unconstrained or capacity-constrained)
    - Parameter importance
    - Delayed deployment
+   - CDR scale sensitivity
+   - Multi-growth-rate capacity comparison
+   - Lowest feasible parameter comparison
 
 4. **Visualisation** (follows each analysis)
    - Automated figure generation
@@ -218,6 +233,12 @@ START: What is your research question?
 │
 ├─ "What are the costs of delaying action?"
 │   → Use: Fixed Parameters + Delayed Deployment
+│
+├─ "How much CDR capacity is needed to recover from overshoot?"
+│   → Use: Fixed Parameters + CDR Scale Sensitivity
+│
+├─ "What happens under realistic technology deployment limits?"
+│   → Use: Fixed Parameters + Capacity-Constrained Scenario Comparison
 │
 └─ "All of the above (comprehensive analysis)"
     → Run all analyses sequentially
@@ -808,9 +829,194 @@ comprehensive_cost_dashboard <- create_comprehensive_cost_delay_dashboard(
 
 ---
 
+### 6.13 CDR Scale Sensitivity Analysis
+
+**Chunk:** `cdr_scale_sensitivity_analysis`
+
+**Purpose:** Map the CDR logistic parameter space to identify which combinations of carrying capacity (K) and growth rate (r) allow temperature recovery from overshoot.
+
+**Requirements:**
+- Must use fixed parameters (`parameter_df` with 1 row)
+- Mitigation is zeroed out; CDR is the sole control
+
+**When to use:**
+- Identifying minimum CDR requirements for feasible recovery
+- Understanding the boundary between recoverable and unrecoverable overshoot
+- Comparing CDR requirements across SSP scenarios
+
+**What it does:**
+1. Builds a K × r parameter grid using `build_cdr_scale_grid()`
+2. For each grid cell, runs the full SSP scenario comparison with a logistic CDR capacity constraint
+3. Records whether each combination achieves recovery to ≤ 1.5°C by 2100
+
+**Customisation options:**
+```r
+# CDR carrying capacity range (GtCO2/year)
+K_min <- 25    # Minimum
+K_max <- 200   # Maximum
+n_K   <- 51    # Number of values (controls grid resolution)
+
+# CDR growth rate range
+r_min <- 0.02
+r_max <- 0.20
+n_r   <- 51
+
+# CDR starting conditions
+g_initial <- 2     # Current CDR deployment level (GtCO2/year)
+t_start   <- 2025  # Year CDR deployment begins
+```
+
+**Expected runtime:**
+- 51 × 51 grid, 5 scenarios (parallel): 30–90 minutes depending on hardware
+
+---
+
+### 6.14 CDR Scale Sensitivity Visualisation
+
+**Chunk:** `cdr_scale_sensitivity_visualisation`
+
+**Purpose:** Create heatmap dashboards showing how K and r affect climate outcomes across SSP scenarios.
+
+**What it does:**
+Creates two figures saved to `figs/`:
+1. **Combined temperature dashboard**: Heatmaps of peak temperature and years above 1.5°C, with K on the x-axis and r on the y-axis, one column per SSP scenario
+2. **Outcome plot**: Distinguishes the recoverable (feasible) and unrecoverable (infeasible) regions of K–r space, with transparency used to show proximity to the recovery boundary
+
+---
+
+### 6.15 CDR Scale Data Extraction
+
+**Chunk:** `cdr_scale_data_results`
+
+**Purpose:** Extract key summary statistics from the sensitivity results and save them as CSVs.
+
+**What it does:**
+Calls `extract_cdr_scale_metrics()` which produces three output tables:
+
+| Table | Description |
+|---|---|
+| `feasible_min.csv` | The lowest r and lowest K that achieve feasible recovery per SSP, including AUC of CDR deployment over 75 years |
+| `cdr_threshold.csv` | Maximum CDR units in failed runs and minimum CDR units in successful runs, defining the recoverable/unrecoverable boundary |
+| `min_unrecoverable.csv` | The minimum peak temperature above which recovery becomes impossible for each SSP |
+
+**Customisation options:**
+```r
+peak_temp_threshold  <- 1.51   # Minimum peak to count as genuine overshoot
+final_temp_threshold <- 1.501  # Maximum final temperature to count as recovered
+```
+
+---
+
+### 6.16 Scenario Comparison with Capacity Constraints
+
+**Chunk:** `scenario_comparison_analysis_capacity`
+
+**Purpose:** Compare optimal strategies across SSP scenarios with realistic deployment limits enforced on CDR (and optionally mitigation).
+
+**Requirements:**
+- Must use fixed parameters (`parameter_df` with 1 row)
+
+**When to use:**
+- Assessing scenario feasibility under technology ramp-up constraints
+- Understanding the impact of CDR deployment speed on temperature outcomes
+- Comparing scenarios when instantaneous large-scale deployment is unrealistic
+
+**What it does:**
+Runs the standard scenario comparison but constrains CDR (and optionally mitigation) to follow a logistic capacity curve. If the capacity constraint makes returning to 1.5°C impossible, the solver returns its best-effort result with `feasible = FALSE`.
+
+**Customisation options:**
+```r
+# CDR capacity constraint — logistic S-curve
+cdr_capacity_function <- make_logistic_from_zero(
+  g_initial = 2,    # Current CDR level (GtCO2/year)
+  K         = 100,  # Maximum CDR capacity (GtCO2/year)
+  r         = 0.07, # Growth rate (0.05 = slow, 0.10 = fast)
+  t_start   = 2025
+)
+
+# Set use_mitigation_capacity_limit = TRUE with make_zero_capacity()
+# to eliminate mitigation and isolate CDR as the sole control
+```
+
+---
+
+### 6.17 Multi-Growth-Rate Capacity Comparison
+
+**Chunk:** `multi_scenario_comparison_analysis_capacity`
+
+**Purpose:** Run the capacity-constrained scenario comparison for multiple CDR growth rates in a single sweep, assembling all results into a named list.
+
+**When to use:**
+- Comparing outcomes under slow, moderate, and fast CDR ramp-up
+- Identifying which growth rates allow feasible recovery for each SSP
+
+**Customisation options:**
+```r
+# Named CDR growth rates to compare
+cdr_r_values <- c(
+  slow     = 0.05,
+  moderate = 0.07,
+  fast     = 0.11
+)
+
+# Shared CDR parameters across all rates
+cdr_g_initial <- 2     # Starting CDR level (GtCO2/year)
+cdr_K         <- 100   # Maximum CDR capacity (GtCO2/year)
+cdr_t_start   <- 2025
+```
+
+**Output:** `capacity_growth_results` — a named list keyed by rate label (e.g., `slow`, `moderate`, `fast`). Each element is the full output of `run_scenario_comparison()`. Index with:
+```r
+capacity_growth_results$moderate$comparison_summary
+capacity_growth_results$fast$scenario_results[["SSP3-Baseline"]]
+```
+
+---
+
+### 6.18 Lowest Feasible Parameter Comparison
+
+**Chunk:** `lowest_comparison_analysis`
+
+**Purpose:** Run the optimal control model for SSP-specific (r, K) pairs — typically the minimum r and minimum K pairs identified from the CDR scale sensitivity grid.
+
+**When to use:**
+- Visualising the actual CDR and temperature trajectories at boundary conditions
+- Comparing the "cheapest-to-scale" (lowest r) vs "smallest-ceiling" (lowest K) feasible pathways for each SSP
+
+**Customisation options:**
+```r
+# Assign exact (r, K) pairs to each SSP individually
+ssp_params <- list(
+  "SSP1-Baseline" = list(
+    c(r = 0.045, K = 95),   # pair_1
+    c(r = 0.07,  K = 25)    # pair_2
+  ),
+  ...
+)
+```
+
+Pairs are labelled automatically as `pair_1`, `pair_2`, ... in the order listed. K must exceed `cdr_g_initial` for every pair.
+
+**Output:** `lowest_results` — a nested list keyed first by SSP then by pair label:
+```r
+lowest_results[["SSP3-Baseline"]][["pair_1"]]$comparison_summary
+```
+
+---
+
+### 6.19 Extract Capacity Growth Summary
+
+**Chunk:** `extract_capacity_summary`
+
+**Purpose:** Flatten the `capacity_growth_results` nested list into a tidy data frame (one row per SSP × growth rate) and save as a timestamped CSV.
+
+**Requires:** `capacity_growth_results` from `multi_scenario_comparison_analysis_capacity`
+
+---
+
 ## Analysis Types
 
-This section summarises the three main analysis types and when to use each.
+This section summarises all available analysis types and when to use each.
 
 ### 7.1 Scenario Comparison
 
@@ -871,6 +1077,47 @@ This section summarises the three main analysis types and when to use each.
 **Parameters:** Single parameter set (fixed parameters)  
 **Outputs:** Heatmaps, feasibility maps, cost gradients  
 **Runtime:** 5-10 minutes (5 scenarios, 10-year steps, parallel)
+
+---
+
+### 7.4 CDR Scale Sensitivity
+
+**Research Question:** "How much CDR capacity (carrying capacity K, growth rate r) is needed to recover from temperature overshoot?"
+
+**What it does:**
+- Sweeps K and r across a user-defined grid
+- Runs the full scenario comparison at each grid point with CDR as the sole control
+- Identifies the boundary between recoverable and unrecoverable parameter combinations
+- Extracts minimum feasible K and r values per SSP
+
+**Use for:**
+- Setting CDR deployment targets
+- Comparing CDR requirements across emission scenarios
+- Identifying technology constraints that prevent 1.5°C recovery
+
+**Parameters:** Single parameter set (fixed parameters)  
+**Outputs:** Heatmaps (K vs r), outcome plots, summary CSVs  
+**Runtime:** 30–90 minutes (51 × 51 grid, 5 scenarios, parallel)
+
+---
+
+### 7.5 Capacity-Constrained Deployment
+
+**Research Question:** "Are optimal strategies still feasible when CDR (and mitigation) deployment is constrained by realistic technology ramp-up limits?"
+
+**What it does:**
+- Enforces logistic capacity curves on CDR and/or mitigation deployment
+- Finds the best achievable outcome within the constrained space
+- Compares outcomes across CDR growth rates (slow, moderate, fast)
+
+**Use for:**
+- Technology feasibility assessment
+- Identifying scenarios where constraints prevent 1.5°C recovery
+- Comparing the value of faster vs larger CDR deployment
+
+**Parameters:** Single parameter set (fixed parameters)  
+**Outputs:** Scenario trajectories, comparison summaries, capacity dashboards  
+**Runtime:** 5-15 minutes per growth rate (5 scenarios, parallel)
 
 ---
 
@@ -1515,10 +1762,11 @@ Suitable for Master's theses, PhD chapters, coursework projects.
 #### Q: Can I use MACROM results in publications?
 
 **A:** Yes! MACROM is open source (CC-BY-4.0 licence). Please:
-1. **Cite the MACROM paper** (see README.md)
-2. **Acknowledge the model**: "Analysis performed using MACROM"
-3. **Document parameters used**: Include in supplementary materials
-4. **Share your code** (if possible): Helps reproducibility
+1. **Cite the MACROM preprint**: Rynne et al. (2026), https://doi.org/10.31223/X5SB5W
+2. **Cite the code repository**: https://doi.org/10.5281/zenodo.18463951
+3. **Acknowledge the model**: "Analysis performed using MACROM v2.0.0"
+4. **Document parameters used**: Include in supplementary materials
+5. **Share your code** (if possible): Helps reproducibility
 
 #### Q: Will MACROM continue to be developed?
 

@@ -309,3 +309,56 @@ make_piecewise_capacity <- function(breakpoints) {
 make_zero_capacity <- function() {
   function(year) 0
 }
+
+
+#' @title Extract Capacity Growth Summary
+#' @description
+#' Pulls peak temperature and years above 1.5°C for every SSP × growth rate
+#' combination from run_capacity_growth_comparison() output into a single tidy
+#' data frame, then saves it as a timestamped CSV to the output/ directory.
+#'
+#' @param capacity_growth_results Output from run_capacity_growth_comparison()
+#' @param verbose Print progress messages (default TRUE)
+#'
+#' @return Tidy data frame with columns: ssp, growth_rate, peak_temperature,
+#'   years_above_1p5. Rows ordered by SSP then growth rate.
+#'
+#' @examples
+#' capacity_summary_df <- extract_capacity_summary(capacity_growth_results)
+extract_capacity_summary <- function(capacity_growth_results, verbose = TRUE) {
+
+  clean_scenario_names <- function(x) gsub("-Baseline$", "", x)
+
+  capacity_summary_df <- purrr::map_dfr(names(capacity_growth_results), function(rate) {
+    summary <- capacity_growth_results[[rate]]$comparison_summary
+    if (is.null(summary)) {
+      warning(sprintf("No comparison_summary found for growth rate '%s'", rate))
+      return(NULL)
+    }
+    data.frame(
+      ssp              = clean_scenario_names(summary$scenario),
+      growth_rate      = rate,
+      peak_temperature = summary$peak_temperature,
+      years_above_1p5  = summary$years_above_1p5,
+      stringsAsFactors = FALSE
+    )
+  })
+
+  growth_rate_order <- names(capacity_growth_results)
+  ssp_order         <- sort(unique(capacity_summary_df$ssp))
+
+  capacity_summary_df$growth_rate <- factor(capacity_summary_df$growth_rate,
+                                             levels = growth_rate_order)
+  capacity_summary_df$ssp         <- factor(capacity_summary_df$ssp,
+                                             levels = ssp_order)
+
+  capacity_summary_df <- capacity_summary_df[
+    order(capacity_summary_df$ssp, capacity_summary_df$growth_rate), ]
+
+  csv_filename <- paste0("capacity_summary_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".csv")
+  utils::write.csv(capacity_summary_df, here::here("output", csv_filename), row.names = FALSE)
+
+  if (verbose) cat("Capacity summary saved to output/", csv_filename, "\n")
+
+  capacity_summary_df
+}

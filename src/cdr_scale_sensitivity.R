@@ -734,3 +734,98 @@ run_cdr_scale_sensitivity <- function(parameter_df,
   return(results_list_out)
   
 } # Close run_cdr_scale_sensitivity
+
+
+# ==============================================================================
+# Section 4: Convenience Wrapper
+# ==============================================================================
+
+#' @title Run CDR Scale Sensitivity from User Parameters
+#' @description
+#' Convenience wrapper that builds the K × r parameter grid and runs the full
+#' sensitivity sweep in a single call. Accepts the same user-facing parameters
+#' as the workflow chunk and returns the same output as run_cdr_scale_sensitivity().
+#'
+#' @param K_min Minimum CDR carrying capacity (GtCO2/year)
+#' @param K_max Maximum CDR carrying capacity (GtCO2/year)
+#' @param n_K Number of K values to test
+#' @param r_min Minimum CDR growth rate
+#' @param r_max Maximum CDR growth rate
+#' @param n_r Number of r values to test
+#' @param r_log_scale Logical: use log-spaced r values (default FALSE)
+#' @param g_initial Starting CDR deployment level (GtCO2/year)
+#' @param t_start Year CDR deployment begins
+#' @param scenarios Character vector of SSP scenario names to compare
+#' @param parameter_df Single-row data frame of model parameters
+#' @param emissions_df Emissions data frame from interpolate_ssp_emissions()
+#' @param economic_df Economic data frame from interpolate_ssp_economic()
+#' @param use_mitigation_capacity_limit Logical: activate mitigation capacity
+#'   constraint (default TRUE). Pair with make_zero_capacity() to eliminate
+#'   mitigation so CDR is the sole control.
+#' @param mitigation_capacity_function Capacity function for mitigation with
+#'   signature function(year). Required when use_mitigation_capacity_limit = TRUE.
+#' @param use_parallel Logical: enable parallel processing (default TRUE)
+#' @param save_results Logical: save results to output/ directory (default TRUE)
+#' @param verbose Logical: print progress and summary (default TRUE)
+#'
+#' @return List from run_cdr_scale_sensitivity(): combined_results, summary_stats,
+#'   run_info. See run_cdr_scale_sensitivity() for full column descriptions.
+#'
+#' @examples
+#' \dontrun{
+#' results <- run_cdr_scale_sensitivity_from_params(
+#'   K_min        = 25, K_max = 200, n_K = 51,
+#'   r_min        = 0.02, r_max = 0.20, n_r = 51,
+#'   g_initial    = 2, t_start = 2025,
+#'   scenarios    = c("SSP1-Baseline", "SSP5-Baseline"),
+#'   parameter_df = parameter_df[1, ],
+#'   emissions_df = emissions_df,
+#'   economic_df  = economic_df
+#' )
+#' }
+run_cdr_scale_sensitivity_from_params <- function(K_min,
+                                                   K_max,
+                                                   n_K,
+                                                   r_min,
+                                                   r_max,
+                                                   n_r,
+                                                   r_log_scale                   = FALSE,
+                                                   g_initial                     = 2,
+                                                   t_start                       = 2025,
+                                                   scenarios,
+                                                   parameter_df,
+                                                   emissions_df,
+                                                   economic_df,
+                                                   use_mitigation_capacity_limit = TRUE,
+                                                   mitigation_capacity_function  = make_zero_capacity(),
+                                                   use_parallel                  = TRUE,
+                                                   save_results                  = TRUE,
+                                                   verbose                       = TRUE) {
+
+  cdr_grid <- build_cdr_scale_grid(
+    K_min       = K_min,
+    K_max       = K_max,
+    n_K         = n_K,
+    r_min       = r_min,
+    r_max       = r_max,
+    n_r         = n_r,
+    r_log_scale = r_log_scale
+  )
+
+  run_cdr_scale_sensitivity(
+    parameter_df                  = parameter_df,
+    emissions_df                  = emissions_df,
+    economic_df                   = economic_df,
+    scenarios                     = scenarios,
+    cdr_grid                      = cdr_grid,
+    g_initial                     = g_initial,
+    t_start                       = t_start,
+    mitigation_delay_years        = 0,
+    cdr_delay_years               = 0,
+    use_mitigation_capacity_limit = use_mitigation_capacity_limit,
+    mitigation_capacity_function  = mitigation_capacity_function,
+    use_parallel                  = use_parallel,
+    save_results                  = save_results,
+    verbose                       = verbose
+  )
+}
