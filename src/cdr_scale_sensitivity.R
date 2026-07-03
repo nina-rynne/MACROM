@@ -422,12 +422,15 @@ run_cdr_scale_sensitivity <- function(parameter_df,
   
   run_one_combination <- function(K_val, r_val) {
     
-    # Build CDR capacity function for this K/r combination
+    # Build CDR capacity function for this K/r combination.
+    # Capacity curve starts at t_start + cdr_delay_years so that logistic
+    # growth begins from g_initial at the same year CDR deployment actually
+    # starts — no capacity build-up occurs during the delay period.
     cdr_fn <- make_logistic_from_zero(
       g_initial = g_initial,
       K         = K_val,
       r         = r_val,
-      t_start   = t_start
+      t_start   = t_start + cdr_delay_years
     )
     
     # Run scenario comparison serially across scenarios
@@ -792,6 +795,7 @@ run_cdr_scale_sensitivity_from_params <- function(K_min,
                                                    r_log_scale                   = FALSE,
                                                    g_initial                     = 2,
                                                    t_start                       = 2025,
+                                                   cdr_delay_years               = 0,
                                                    scenarios,
                                                    parameter_df,
                                                    emissions_df,
@@ -821,11 +825,262 @@ run_cdr_scale_sensitivity_from_params <- function(K_min,
     g_initial                     = g_initial,
     t_start                       = t_start,
     mitigation_delay_years        = 0,
-    cdr_delay_years               = 0,
+    cdr_delay_years               = cdr_delay_years,
     use_mitigation_capacity_limit = use_mitigation_capacity_limit,
     mitigation_capacity_function  = mitigation_capacity_function,
     use_parallel                  = use_parallel,
     save_results                  = save_results,
     verbose                       = verbose
   )
+}
+
+
+# ==============================================================================
+# Section 5: Multi-Delay Wrapper
+# ==============================================================================
+
+#' @title Run CDR Scale Sensitivity for Multiple CDR Delays
+#' @description
+#' Iterates over a vector of CDR deployment delays, running the full K x r grid
+#' sensitivity analysis once per delay value. For each delay, the logistic
+#' capacity curve begins at t_start + delay so no capacity builds during the
+#' delay period (same convention as run_cdr_delay_growth_analysis()).
+#'
+#' Results are stored as a named list keyed by "delay_N" (e.g. "delay_0",
+#' "delay_20"). Each entry is the full output of run_cdr_scale_sensitivity(),
+#' containing combined_results, summary_stats, and run_info. An intermediate
+#' RDS is saved after each delay completes (crash protection), and a combined
+#' RDS is saved at the end.
+#'
+#' @param K_min Minimum CDR carrying capacity (GtCO2/year)
+#' @param K_max Maximum CDR carrying capacity (GtCO2/year)
+#' @param n_K Number of K values to test
+#' @param r_min Minimum CDR growth rate
+#' @param r_max Maximum CDR growth rate
+#' @param n_r Number of r values to test
+#' @param r_log_scale Logical: use log-spaced r values (default FALSE)
+#' @param g_initial Starting CDR deployment level (GtCO2/year)
+#' @param t_start Year CDR deployment nominally begins (delay shifts actual start)
+#' @param cdr_delay_years Numeric vector of CDR deployment delays to test
+#'   (e.g. c(0, 20, 50, 70))
+#' @param scenarios Character vector of SSP scenario names to compare
+#' @param parameter_df Single-row data frame of model parameters
+#' @param emissions_df Emissions data frame from interpolate_ssp_emissions()
+#' @param economic_df Economic data frame from interpolate_ssp_economic()
+#' @param use_mitigation_capacity_limit Logical: activate mitigation capacity
+#'   constraint (default TRUE)
+#' @param mitigation_capacity_function Capacity function for mitigation
+#'   (default make_zero_capacity())
+#' @param use_parallel Logical: enable parallel processing (default TRUE)
+#' @param save_results Logical: save per-delay and combined RDS files (default TRUE)
+#' @param verbose Logical: print progress (default TRUE)
+#' @param output_dir Directory for saved files (default "output")
+#' @param output_prefix Filename prefix for all saved files
+#'   (default "cdr_scale_sensitivity_delay")
+#'
+#' @return Named list with one entry per delay ("delay_N") plus a top-level
+#'   "run_info" entry. Each "delay_N" entry contains combined_results,
+#'   summary_stats, and run_info from run_cdr_scale_sensitivity().
+#'   Use combine_multi_delay_results() to flatten into a single data frame
+#'   with a cdr_delay_years column for visualisation.
+#'
+#' @examples
+#' \dontrun{
+#' scale_delay_results <- run_cdr_scale_sensitivity_multi_delay(
+#'   K_min             = 25, K_max = 200, n_K = 11,
+#'   r_min             = 0.02, r_max = 0.20, n_r = 11,
+#'   cdr_delay_years   = c(0, 20, 50, 70),
+#'   scenarios         = c("SSP2-Baseline"),
+#'   parameter_df      = parameter_df[1, ],
+#'   emissions_df      = emissions_df,
+#'   economic_df       = economic_df
+#' )
+#' flat_df <- combine_multi_delay_results(scale_delay_results)
+#' }
+run_cdr_scale_sensitivity_multi_delay <- function(K_min,
+                                                   K_max,
+                                                   n_K,
+                                                   r_min,
+                                                   r_max,
+                                                   n_r,
+                                                   r_log_scale                   = FALSE,
+                                                   g_initial                     = 2,
+                                                   t_start                       = 2025,
+                                                   cdr_delay_years               = c(0, 20, 50, 70),
+                                                   scenarios,
+                                                   parameter_df,
+                                                   emissions_df,
+                                                   economic_df,
+                                                   use_mitigation_capacity_limit = TRUE,
+                                                   mitigation_capacity_function  = make_zero_capacity(),
+                                                   use_parallel                  = TRUE,
+                                                   save_results                  = TRUE,
+                                                   verbose                       = TRUE,
+                                                   output_dir                    = "output",
+                                                   output_prefix                 = "cdr_scale_sensitivity_delay") {
+
+  # --------------------------------------------------------------------------
+  # Input validation
+  # --------------------------------------------------------------------------
+  if (!is.numeric(cdr_delay_years) || length(cdr_delay_years) < 1) {
+    stop("cdr_delay_years must be a numeric vector with at least one value")
+  }
+  if (any(cdr_delay_years < 0)) {
+    stop("All cdr_delay_years values must be >= 0")
+  }
+
+  delay_values <- sort(unique(cdr_delay_years))
+  delay_keys   <- paste0("delay_", delay_values)
+  start_time   <- Sys.time()
+
+  # Build the grid once — same grid used for every delay
+  cdr_grid <- build_cdr_scale_grid(
+    K_min       = K_min,
+    K_max       = K_max,
+    n_K         = n_K,
+    r_min       = r_min,
+    r_max       = r_max,
+    n_r         = n_r,
+    r_log_scale = r_log_scale
+  )
+
+  if (verbose) {
+    cat("=== CDR SCALE SENSITIVITY — MULTI-DELAY SWEEP ===\n")
+    cat("Delay values:         ", paste(delay_values, collapse = ", "), "years\n")
+    cat("Grid size:            ", nrow(cdr_grid), "combinations (",
+        length(unique(cdr_grid$K)), "K x",
+        length(unique(cdr_grid$r)), "r )\n")
+    cat("K range:              ",
+        sprintf("%.1f - %.1f GtCO2/year", K_min, K_max), "\n")
+    cat("r range:              ",
+        sprintf("%.4f - %.4f", r_min, r_max), "\n")
+    cat("Scenarios:            ", paste(scenarios, collapse = ", "), "\n")
+    cat("Total delay sweeps:   ", length(delay_values), "\n\n")
+  }
+
+  # --------------------------------------------------------------------------
+  # Iterate over delays
+  # --------------------------------------------------------------------------
+  all_results        <- vector("list", length(delay_values) + 1)
+  names(all_results) <- c(delay_keys, "run_info")
+
+  for (i in seq_along(delay_values)) {
+
+    delay     <- delay_values[i]
+    delay_key <- delay_keys[i]
+
+    if (verbose) {
+      elapsed <- as.numeric(difftime(Sys.time(), start_time, units = "mins"))
+      cat(strrep("=", 60), "\n")
+      cat(sprintf("Delay %d of %d: %d years  (%.1f min elapsed)\n",
+                  i, length(delay_values), delay, elapsed))
+      cat(strrep("=", 60), "\n")
+    }
+
+    delay_result <- run_cdr_scale_sensitivity(
+      parameter_df                  = parameter_df,
+      emissions_df                  = emissions_df,
+      economic_df                   = economic_df,
+      scenarios                     = scenarios,
+      cdr_grid                      = cdr_grid,
+      g_initial                     = g_initial,
+      t_start                       = t_start,
+      mitigation_delay_years        = 0,
+      cdr_delay_years               = delay,
+      use_mitigation_capacity_limit = use_mitigation_capacity_limit,
+      mitigation_capacity_function  = mitigation_capacity_function,
+      use_parallel                  = use_parallel,
+      save_results                  = FALSE,
+      verbose                       = verbose
+    )
+
+    all_results[[delay_key]] <- delay_result
+
+    # Per-delay intermediate save (crash protection)
+    if (save_results) {
+      if (!dir.exists(output_dir)) dir.create(output_dir, recursive = TRUE)
+      timestamp  <- format(Sys.time(), "%Y%m%d_%H%M%S")
+      delay_file <- file.path(
+        output_dir,
+        paste0(output_prefix, "_", delay_key, "_", timestamp, ".rds")
+      )
+      saveRDS(delay_result, delay_file)
+      if (verbose) cat("  Saved:", delay_file, "\n")
+    }
+  }
+
+  # --------------------------------------------------------------------------
+  # Top-level metadata and combined save
+  # --------------------------------------------------------------------------
+  total_time <- difftime(Sys.time(), start_time, units = "mins")
+
+  all_results[["run_info"]] <- list(
+    delay_values                  = delay_values,
+    K_range                       = c(K_min, K_max),
+    r_range                       = c(r_min, r_max),
+    n_K                           = n_K,
+    n_r                           = n_r,
+    g_initial                     = g_initial,
+    t_start                       = t_start,
+    scenarios                     = scenarios,
+    use_mitigation_capacity_limit = use_mitigation_capacity_limit,
+    start_time                    = start_time,
+    end_time                      = Sys.time(),
+    total_runtime_minutes         = as.numeric(total_time)
+  )
+
+  if (verbose) {
+    cat("\n", strrep("=", 60), "\n", sep = "")
+    cat(sprintf("COMPLETE — Total time: %.1f minutes\n", as.numeric(total_time)))
+    cat(strrep("=", 60), "\n")
+  }
+
+  if (save_results) {
+    timestamp     <- format(Sys.time(), "%Y%m%d_%H%M%S")
+    combined_file <- file.path(
+      output_dir,
+      paste0(output_prefix, "_combined_", timestamp, ".rds")
+    )
+    saveRDS(all_results, combined_file)
+    if (verbose) cat("Combined results saved to:", combined_file, "\n")
+  }
+
+  return(all_results)
+}
+
+
+#' @title Combine Multi-Delay Results into a Flat Data Frame
+#' @description
+#' Extracts the combined_results data frame from each delay entry in a
+#' run_cdr_scale_sensitivity_multi_delay() output object, adds a cdr_delay_years
+#' column, and row-binds everything into a single flat data frame. This is the
+#' starting point for cross-delay visualisations.
+#'
+#' @param multi_delay_results Output list from
+#'   run_cdr_scale_sensitivity_multi_delay()
+#'
+#' @return Data frame with all rows from all delays, plus cdr_delay_years
+#'   (integer). Sorted by cdr_delay_years, K, r, scenario.
+combine_multi_delay_results <- function(multi_delay_results) {
+
+  delay_keys <- grep("^delay_", names(multi_delay_results), value = TRUE)
+
+  if (length(delay_keys) == 0) {
+    stop("No delay entries found. Expected names matching 'delay_N' in the results list.")
+  }
+
+  df_list <- lapply(delay_keys, function(dk) {
+    delay_val              <- as.integer(sub("^delay_", "", dk))
+    df                     <- multi_delay_results[[dk]]$combined_results
+    df$cdr_delay_years     <- delay_val
+    df
+  })
+
+  combined <- dplyr::bind_rows(df_list)
+  combined  <- combined[order(combined$cdr_delay_years,
+                              combined$K,
+                              combined$r,
+                              combined$scenario), ]
+  rownames(combined) <- NULL
+  return(combined)
 }

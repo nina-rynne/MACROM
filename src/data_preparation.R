@@ -357,30 +357,37 @@ interpolate_ssp_emissions <- function(emissions_df, dt = 1, start_year = 2025, e
         method = "linear",
         rule = 2  # rule=2 means extrapolate beyond the data range
       )
-      
+
       merged_data$Value <- interp_values$y
-      
-      # Store this result in the list
-      result_list[[i]] <- merged_data
     } else if (length(available_values) == 1) {
       # If only one valid point, use that value for all years
       merged_data$Value <- available_values[1]
-      
+    }
+
+    if (length(available_values) >= 1) {
+      # Raw data points outside [start_year, end_year] (e.g. an earlier
+      # anchor year only needed to interpolate the first requested years)
+      # are kept in merged_data up to this point so approx() has enough
+      # points to interpolate/extrapolate correctly, but were never part of
+      # the requested series. Drop them now so the returned data frame only
+      # spans years_seq, whatever start_year/end_year/dt were requested.
+      merged_data <- merged_data %>% dplyr::filter(Year %in% years_seq)
+
       # Store this result in the list
       result_list[[i]] <- merged_data
     }
     # If zero valid points, we don't add anything to the list
   }
-  
+
   # Combine all results from the list using bind_rows
   # This is more reliable than repeatedly using rbind
   if (length(result_list) > 0) {
     interpolated_data <- dplyr::bind_rows(result_list)
-    
+
     # Apply the % emissions remaining after ocean/biosphere uptake
     interpolated_data <- interpolated_data %>%
       dplyr::mutate(Value = Value * clim_co2_remain)
-    
+
     return(interpolated_data)
   } else {
     warning("No valid interpolated data was produced. Check input data structure.")
@@ -480,28 +487,35 @@ interpolate_ssp_economic <- function(economic_df, dt = 1, start_year = 2025, end
       )
       
       merged_data$Value <- interp_values$y
-      
-      # Store this result in the list
-      result_list[[i]] <- merged_data
     } else if (length(available_values) == 1) {
       # If only one valid point, use that value for all years
       merged_data$Value <- available_values[1]
-      
+    }
+
+    if (length(available_values) >= 1) {
+      # Raw data points outside [start_year, end_year] (e.g. an earlier
+      # anchor year only needed to interpolate the first requested years)
+      # are kept in merged_data up to this point so approx() has enough
+      # points to interpolate/extrapolate correctly, but were never part of
+      # the requested series. Drop them now so the returned data frame only
+      # spans years_seq, whatever start_year/end_year/dt were requested.
+      merged_data <- merged_data %>% dplyr::filter(Year %in% years_seq)
+
       # Store this result in the list
       result_list[[i]] <- merged_data
     }
     # If zero valid points, we don't add anything to the list
   }
-  
+
   # Combine all results from the list using bind_rows
   # This is more reliable than repeatedly using rbind
   if (length(result_list) > 0) {
     interpolated_data <- dplyr::bind_rows(result_list)
-    
+
     # Multiply all values by 1 trillion (1e12)
     #interpolated_data <- interpolated_data %>%
     #  dplyr::mutate(Value = Value * 1e12)
-    
+
     return(interpolated_data)
   } else {
     warning("No valid interpolated data was produced. Check input data structure.")

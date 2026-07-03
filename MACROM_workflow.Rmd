@@ -529,6 +529,106 @@ cdr_scale_sensitivity_results <- run_cdr_scale_sensitivity_from_params(
 )
 ```
 
+```{r cdr_scale_sensitivity_delay_analysis, eval=FALSE}
+# ==============================================================================
+# CDR Scale Sensitivity — Multi-Delay Analysis
+# ==============================================================================
+# Runs the full K x r sensitivity grid for each of a user-chosen set of CDR
+# deployment delays. The result shows how the feasible (K, r) parameter space
+# shrinks as the delay before CDR deployment increases.
+#
+# The logistic capacity curve starts at t_start + delay for each run, so no
+# capacity builds during the delay period (represents lack of funding /
+# development / political will).
+#
+# REQUIREMENTS: Must source cdr_scale_sensitivity.R (included below)
+# OUTPUTS: Per-delay RDS files + combined RDS saved to output/
+# RUNTIME: (n_K × n_r) combinations × n_delays × ~0.27 min/comparison
+#   Example: 11 x 11 grid, 4 delays, 1 SSP => 484 comparisons => ~2 min
+#   Example: 21 x 21 grid, 4 delays, 5 SSPs => ~5 hrs (run overnight)
+
+source(here::here("src", "optimal_control_capacity.R"))
+source(here::here("src", "scenario_comparison_capacity.R"))
+source(here::here("src", "capacity_helpers.R"))
+source(here::here("src", "cdr_scale_sensitivity.R"))
+
+# USER CHOICE: CDR K range (carrying capacity, GtCO2/year)
+K_min <- 25     # Minimum CDR carrying capacity
+K_max <- 200    # Maximum CDR carrying capacity
+n_K   <- 11     # Number of K values (use 11 for testing, 51 for publication)
+
+# USER CHOICE: CDR r range (growth rate)
+r_min       <- 0.02    # Minimum CDR growth rate
+r_max       <- 0.20    # Maximum CDR growth rate
+n_r         <- 11      # Number of r values (use 11 for testing, 51 for publication)
+r_log_scale <- FALSE   # Set TRUE for log-spaced r values
+
+# USER CHOICE: Fixed CDR starting conditions
+g_initial <- 2      # Starting CDR deployment level (GtCO2/year)
+t_start   <- 2025   # Year CDR deployment nominally begins
+
+# USER CHOICE: Delay values to compare (years)
+# These are the delays whose boundaries will be overlaid in visualisation
+cdr_delays <- c(0, 20, 40)
+
+# USER CHOICE: Scenarios to analyse
+# Use one SSP for testing; all five for publication
+scenarios_to_compare <- c("SSP1-Baseline", "SSP2-Baseline", "SSP3-Baseline", "SSP4-Baseline", "SSP5-Baseline")
+
+scale_delay_results <- run_cdr_scale_sensitivity_multi_delay(
+  K_min             = K_min,
+  K_max             = K_max,
+  n_K               = n_K,
+  r_min             = r_min,
+  r_max             = r_max,
+  n_r               = n_r,
+  r_log_scale       = r_log_scale,
+  g_initial         = g_initial,
+  t_start           = t_start,
+  cdr_delay_years   = cdr_delays,
+  scenarios         = scenarios_to_compare,
+  parameter_df      = parameter_df[1, ],
+  emissions_df      = emissions_df,
+  economic_df       = economic_df,
+  use_parallel      = TRUE,
+  save_results      = TRUE
+)
+
+# Flatten to a single data frame for visualisation
+scale_delay_flat <- combine_multi_delay_results(scale_delay_results)
+```
+
+```{r cdr_scale_sensitivity_delay_heatmaps, eval=FALSE}
+# ==============================================================================
+# CDR Scale Sensitivity — Outcome Heatmaps by Delay
+# ==============================================================================
+# Produces one standard outcome heatmap per CDR delay value, using the same
+# recoverable / unrecoverable classification as the base scale sensitivity.
+# Each plot is displayed and saved to figs/ as a separate PDF.
+
+source(here::here("src", "cdr_scale_sensitivity_visualisation.R"))
+
+if (!exists("scale_delay_results")) {
+  stop("scale_delay_results not found. Run cdr_scale_sensitivity_delay_analysis first.")
+}
+
+delay_keys <- grep("^delay_", names(scale_delay_results), value = TRUE)
+
+for (dk in delay_keys) {
+  delay_val <- as.integer(sub("^delay_", "", dk))
+  cat(sprintf("\nPlotting outcome heatmap for delay = %d years...\n", delay_val))
+
+  p <- create_cdr_scale_outcome_plot(
+    sensitivity_results = scale_delay_results[[dk]],
+    save_plot           = TRUE,
+    filename            = sprintf("cdr_scale_outcome_delay_%d", delay_val),
+    verbose             = FALSE
+  )
+
+  print(p)
+}
+```
+
 ```{r cdr_scale_sensitivity_visualisation, eval=FALSE}
 # ==============================================================================
 # CDR Scale Sensitivity Visualisation
@@ -914,6 +1014,231 @@ capacity_dashboard <- create_capacity_scenario_comparison_dashboard(
 print(capacity_dashboard)
 ```
 
+
+```{r cdr_delay_growth_analysis, eval=FALSE}
+# ==============================================================================
+# CDR Delay x Growth Rate Analysis
+# ==============================================================================
+# Sweeps CDR deployment delay (0 to max_delay_years) across a set of named CDR
+# growth rates (slow, moderate, fast) with a fixed carrying capacity K.
+# Mitigation is eliminated so CDR is the sole control throughout.
+#
+# REQUIREMENTS: Must use single parameter set (parameter_df with 1 row)
+# OUTPUTS: Intermediate per-rate RDS files + combined RDS saved to output/
+# RUNTIME: Scales with length(r_values) x (max_delay_years / delay_step_size)
+#          Approx 0.27 min per scenario comparison (5 SSPs in parallel):
+#          step_size=1  (~213 comparisons) ≈ 57 min
+#          step_size=5  (~45 comparisons)  ≈ 12 min
+#          step_size=10 (~24 comparisons)  ≈ 6.5 min
+
+source(here::here("src", "optimal_control_capacity.R"))
+source(here::here("src", "scenario_comparison_capacity.R"))
+source(here::here("src", "capacity_helpers.R"))
+source(here::here("src", "cdr_delay_growth.R"))
+
+# USER CHOICE: CDR growth rates to compare (named vector)
+# Common values: slow ≈ 0.05, moderate ≈ 0.07, fast ≈ 0.11
+cdr_r_values <- c(
+  slow     = 0.05,
+  moderate = 0.07,
+  fast     = 0.11
+)
+
+# USER CHOICE: Fixed CDR logistic parameters (shared across all growth rates)
+cdr_K         <- 100   # Maximum CDR carrying capacity (GtCO2/year)
+cdr_g_initial <- 2     # Starting CDR deployment level (GtCO2/year)
+cdr_t_start   <- 2025  # Year CDR deployment begins
+
+# USER CHOICE: Delay range and step size
+max_delay_years <- 70   # Maximum CDR delay to test (years)
+delay_step_size <- 10   # Step size — set to 1 for publication-quality results,
+                        # larger for fast exploratory runs (e.g. 5 or 10)
+
+# USER CHOICE: Scenarios to analyse
+scenarios_to_compare <- c("SSP1-Baseline", "SSP2-Baseline", "SSP3-Baseline",
+                          "SSP4-Baseline", "SSP5-Baseline")
+
+cdr_delay_growth_results <- run_cdr_delay_growth_analysis(
+  parameter_df                  = parameter_df[1, ],
+  emissions_df                  = emissions_df,
+  economic_df                   = economic_df,
+  scenarios                     = scenarios_to_compare,
+  r_values                      = cdr_r_values,
+  K                             = cdr_K,
+  g_initial                     = cdr_g_initial,
+  t_start                       = cdr_t_start,
+  max_delay_years               = max_delay_years,
+  delay_step_size               = delay_step_size,
+  use_mitigation_capacity_limit = TRUE,
+  mitigation_capacity_function  = make_zero_capacity(),
+  use_parallel                  = TRUE,
+  save_results                  = TRUE,
+  verbose                       = TRUE
+)
+```
+
+```{r cdr_delay_growth_outcome_plots, eval=FALSE}
+# ==============================================================================
+# CDR Delay x Growth Rate Outcome Plots
+# ==============================================================================
+# Three plots using the same tidy summary data:
+#   1. Line plot — peak temperature vs CDR delay (one line per growth rate,
+#      5 SSP column facets)
+#   2. Line plot — years above 1.5C vs CDR delay (same structure)
+#   3. Threshold dot plot — last feasible CDR delay before outcome becomes
+#      unrecoverable, by SSP and growth rate
+#
+# Each saved as a separate PDF and PNG to figs/
+
+source(here::here("src", "cdr_delay_growth_visualisation.R"))
+
+if (!exists("cdr_delay_growth_results")) {
+  stop("Results not found. Please run the cdr_delay_growth_analysis chunk first.")
+}
+
+# USER CHOICE: Thresholds (match cdr_scale_data_results for consistency)
+peak_temp_threshold  <- 1.51
+final_temp_threshold <- 1.501
+
+# Extract tidy summary (shared by all three plots)
+if (!exists("delay_summary_df")) {
+  delay_summary_df <- extract_delay_summary(
+    delay_growth_results = cdr_delay_growth_results,
+    peak_temp_threshold  = peak_temp_threshold,
+    final_temp_threshold = final_temp_threshold
+  )
+}
+
+# 1. Peak temperature vs delay
+plot_peak_temp <- create_delay_line_plot(
+  summary_df = delay_summary_df,
+  variable   = "peak_temperature",
+  save_plot  = TRUE,
+  width      = 297,
+  height     = 100
+)
+print(plot_peak_temp)
+
+# 2. Years above 1.5C vs delay
+plot_years <- create_delay_line_plot(
+  summary_df = delay_summary_df,
+  variable   = "years_above_1p5",
+  save_plot  = TRUE,
+  width      = 297,
+  height     = 100
+)
+print(plot_years)
+
+# 3. Last feasible delay threshold
+plot_threshold <- create_delay_threshold_plot(
+  summary_df = delay_summary_df,
+  save_plot  = TRUE,
+  width      = 180,
+  height     = 100
+)
+print(plot_threshold)
+```
+
+```{r cdr_delay_growth_heatmaps, eval=FALSE}
+# ==============================================================================
+# CDR Delay x Growth Rate Heatmaps
+# ==============================================================================
+# Creates three heatmaps sharing the same axes:
+#   x = CDR delay (years), y = growth rate (slow/moderate/fast),
+#   facets = SSP scenario (5 columns)
+#
+#   1. Outcome heatmap: categorical fill (no overshoot / recoverable /
+#      unrecoverable overshoot)
+#   2. Peak temperature heatmap: continuous fill
+#   3. Years above 1.5C heatmap: continuous fill
+#
+# Each is saved as a separate PDF and PNG to figs/
+
+source(here::here("src", "cdr_delay_growth_visualisation.R"))
+
+if (!exists("cdr_delay_growth_results")) {
+  stop("Results not found. Please run the cdr_delay_growth_analysis chunk first.")
+}
+
+# USER CHOICE: Thresholds defining overshoot and recovery (match cdr_scale_data_results)
+peak_temp_threshold  <- 1.51    # Minimum peak temperature to count as overshoot
+final_temp_threshold <- 1.501   # Maximum final temperature to count as recovered
+
+# Extract tidy summary data frame (computed once, used by all three heatmaps)
+delay_summary_df <- extract_delay_summary(
+  delay_growth_results = cdr_delay_growth_results,
+  peak_temp_threshold  = peak_temp_threshold,
+  final_temp_threshold = final_temp_threshold
+)
+
+# 1. Outcome heatmap (categorical)
+heatmap_outcome <- create_delay_heatmap(
+  summary_df = delay_summary_df,
+  variable   = "outcome",
+  save_plot  = TRUE,
+  width      = 297,
+  height     = 100
+)
+print(heatmap_outcome)
+
+# 2. Peak temperature heatmap (continuous)
+heatmap_peak_temp <- create_delay_heatmap(
+  summary_df = delay_summary_df,
+  variable   = "peak_temperature",
+  save_plot  = TRUE,
+  width      = 297,
+  height     = 100
+)
+print(heatmap_peak_temp)
+
+# 3. Years above 1.5C heatmap (continuous)
+heatmap_years <- create_delay_heatmap(
+  summary_df = delay_summary_df,
+  variable   = "years_above_1p5",
+  save_plot  = TRUE,
+  width      = 297,
+  height     = 100
+)
+print(heatmap_years)
+```
+
+```{r cdr_delay_growth_visualisation, eval=FALSE}
+# ==============================================================================
+# CDR Delay x Growth Rate Visualisation
+# ==============================================================================
+# Creates a line plot dashboard showing CDR deployment and temperature
+# trajectories across SSP scenarios. Lines within each panel are coloured by
+# CDR delay (plasma colour scale: dark = short delay, bright = long delay).
+# Growth rates are separated into row groups; SSPs are columns.
+# OUTPUTS: Saved automatically to figs/ directory
+
+source(here::here("src", "cdr_delay_growth_visualisation.R"))
+
+if (!exists("cdr_delay_growth_results")) {
+  stop("Results not found. Please run the cdr_delay_growth_analysis chunk first.")
+}
+
+# USER CHOICE: Which growth rates to include
+# Set to NULL to include all rates, or a subset e.g. c("slow", "moderate")
+rates_to_plot <- NULL
+
+# USER CHOICE: Visual options
+show_cap_limit <- TRUE   # Overlay CDR capacity ceiling on CDR panels
+alpha_lines    <- 0.7    # Line transparency — lower if many lines overlap
+
+cdr_delay_growth_dashboard <- create_cdr_delay_growth_dashboard(
+  delay_growth_results = cdr_delay_growth_results,
+  rates                = rates_to_plot,
+  show_capacity_limit  = show_cap_limit,
+  line_alpha           = alpha_lines,
+  save_plot            = TRUE,
+  width                = 297,
+  height               = NULL,   # Auto: 140mm per growth rate included
+  verbose              = TRUE
+)
+
+print(cdr_delay_growth_dashboard)
+```
 
 # ==============================================================================
 # Workflow Complete
