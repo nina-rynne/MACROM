@@ -125,6 +125,40 @@ economic_df <- interpolate_ssp_economic(
 )
 ```
 
+```{r data_preparation_2300_call}
+# ==============================================================================
+# Data Preparation — Extended Horizon (2020-2300)
+# ==============================================================================
+# Import and prepare emissions and economic data extended to 2300 on a
+# decadal time step (data-raw/data source: emissions_2300.csv, gwp_2300.csv).
+# Same import/interpolation logic as data_preparation_call above, just with
+# the longer-horizon source files. Used by analyses that need a genuine
+# (non flat-lined) horizon beyond 2100, e.g. free_time_scale_sensitivity_analysis.
+
+# Source data preparation functions
+source(here::here("src", "data_preparation.R"))
+
+# Import emissions and economic data (extended to 2300)
+emissions_imported_2300 <- import_ssp_emissions("emissions_extension_2300.csv")
+economic_imported_2300  <- import_ssp_economic("gwp_extension_2300.csv")
+
+# Interpolate data to annual time step (2020-2300)
+# USER CHOICE: Modify start_year, end_year, or dt if different time range/step is needed
+emissions_df_2300 <- interpolate_ssp_emissions(
+  emissions_df = emissions_imported_2300,
+  dt = 1,
+  start_year = 2025,
+  end_year = 2300
+)
+
+economic_df_2300 <- interpolate_ssp_economic(
+  economic_df = economic_imported_2300,
+  dt = 1,
+  start_year = 2025,
+  end_year = 2300
+)
+```
+
 ```{r latin_hypercube_sampling_call, eval=FALSE}
 # ==============================================================================
 # PARAMETER APPROACH 1: Multiple Parameter Sets (Sensitivity Analysis)
@@ -361,7 +395,7 @@ source(here::here("src", "delayed_deployment.R"))
 
 # USER CHOICE: Delay range and granularity
 max_delay_years <- 70        # Maximum delay to test (years)
-delay_step_size <- 1          # Step size (1 = yearly, 10 = every decade)
+delay_step_size <- 10          # Step size (1 = yearly, 10 = every decade)
 
 # USER CHOICE: Scenarios to analyse
 # Options: "all" or vector like c("SSP2-Baseline", "SSP3-Baseline")
@@ -413,7 +447,7 @@ dashboard <- create_delayed_deployment_dashboard(
   # USER CHOICE: Variables to plot
   # Options: "peak_temperature", "years_above_1p5", "abatement_cost", 
   #          "temp_cost", "total_cost", "mitig_cost", "remov_cost"
-  variables = c("total_cost", "abatement_cost", "temp_cost"),
+  variables = c("peak_temperature", "years_above_1p5"),
   
   # USER CHOICE: Visual features
   add_contours = TRUE,
@@ -423,7 +457,7 @@ dashboard <- create_delayed_deployment_dashboard(
   
   # USER CHOICE: Styling
   color_palettes = NULL,
-  shared_scale = TRUE,
+  shared_scale = FALSE,
   # Enable percentile capping
   use_scale_limits = TRUE,
   scale_limit_percentile = 70,
@@ -647,8 +681,8 @@ if (!exists("cdr_scale_sensitivity_results")) {
 # Combined temperature heatmap (peak temperature and years above 1.5°C)
 cdr_scale_dashboards_combined <- create_cdr_scale_temperature_dashboards_combined(
   sensitivity_results   = cdr_scale_sensitivity_results,
-  add_contours          = FALSE,
-  add_threshold_line    = FALSE,
+  add_contours          = TRUE,
+  add_threshold_line    = FALSE, # NEEDS FIXING. LINE DIVIDES NO OVERSHOOT FROM RECOVERABLE
   threshold_value_temp  = 1.5,
   threshold_value_years = 0.5,
   show_infeasible       = FALSE,
@@ -700,6 +734,149 @@ cdr_scale_metrics <- extract_cdr_scale_metrics(
   g_initial           = g_initial,
   verbose             = TRUE
 )
+```
+
+```{r free_time_scale_sensitivity_analysis, eval=FALSE}
+# ==============================================================================
+# CDR Scale Sensitivity — Free Terminal Time (Return Year Beyond 2100)
+# ==============================================================================
+# Free-terminal-time extension of the CDR scale sensitivity. For each K/r
+# combination and scenario:
+#   Stage 1: the standard fixed-time T = 2100 problem is solved. Cells that
+#            meet the 1.5°C target by 2100 are recorded with T_star = 2100
+#            (optimum_type = "feasible_by_2100", years_beyond_2100 = 0).
+#   Stage 2: cells INFEASIBLE at 2100 get a free-terminal-time search over
+#            (2100, 2300] for the earliest year the return to 1.5°C becomes
+#            achievable (nested shooting: outer search on the terminal year
+#            using the transversality Hamiltonian H(T), inner loop the usual
+#            emissions-gap shooting). The headline output per cell is
+#            years_beyond_2100 — how much longer that CDR scale needs.
+#
+# This chunk uses the EXTENDED-HORIZON data (emissions_df_2300/economic_df_2300,
+# end_year = 2300) built by the data_preparation_2300_call chunk — genuine SSP
+# projections beyond 2100, not flat-lined extrapolation — so the fixed-time
+# chunks above (using emissions_df/economic_df, end_year = 2100) are unaffected.
+#
+# REQUIREMENTS: Must use single parameter set (parameter_df with 1 row).
+#   Run the data_preparation_2300_call chunk first.
+# OUTPUTS: Saved automatically to output/ directory
+# RUNTIME: Bimodal per cell — feasible-by-2100 cells cost one fixed solve;
+#          infeasible cells run ~10-15 inner solves on horizons up to 2300.
+#          ALWAYS run the runtime estimate below before a full grid: it times
+#          a few representative cells and extrapolates.
+
+source(here::here("src", "data_preparation.R"))
+source(here::here("src", "optimal_control_capacity.R"))   # NOT optimal_control_core.R
+source(here::here("src", "capacity_helpers.R"))
+source(here::here("src", "optimal_control_free_time.R"))
+source(here::here("src", "cdr_scale_sensitivity.R"))       # build_cdr_scale_grid()
+source(here::here("src", "cdr_scale_free_time_sensitivity.R"))
+
+if (!exists("emissions_df_2300") || !exists("economic_df_2300")) {
+  stop("emissions_df_2300/economic_df_2300 not found. ",
+       "Please run the data_preparation_2300_call chunk first.")
+}
+
+# USER CHOICE: CDR K range (carrying capacity, GtCO2/year)
+K_min <- 25     # Minimum CDR carrying capacity
+K_max <- 200    # Maximum CDR carrying capacity
+n_K   <- 31     # Number of K values (use 11 for testing, 51 for publication)
+
+# USER CHOICE: CDR r range (growth rate)
+r_min       <- 0.02    # Minimum CDR growth rate
+r_max       <- 0.20    # Maximum CDR growth rate
+n_r         <- 31      # Number of r values (use 11 for testing, 51 for publication)
+r_log_scale <- FALSE   # Set TRUE for log-spaced r values
+
+# USER CHOICE: Fixed CDR starting conditions
+g_initial <- 2      # Starting CDR deployment level (GtCO2/year)
+t_start   <- 2025   # Year CDR deployment begins
+
+# USER CHOICE: Scenarios to analyse (one SSP for testing, five for publication)
+scenarios_to_compare <- c("SSP1-Baseline", "SSP2-Baseline", "SSP3-Baseline", "SSP4-Baseline", "SSP5-Baseline")
+
+free_time_grid <- build_cdr_scale_grid(
+  K_min       = K_min,
+  K_max       = K_max,
+  n_K         = n_K,
+  r_min       = r_min,
+  r_max       = r_max,
+  n_r         = n_r,
+  r_log_scale = r_log_scale
+)
+
+# ------------------------------------------------------------------------------
+# Runtime estimate from a small timed subset — check this BEFORE the full run
+# ------------------------------------------------------------------------------
+# free_time_runtime <- estimate_free_time_sweep_runtime(
+#   parameter_df = parameter_df[1, ],
+#   emissions_df = emissions_df_2300,
+#   economic_df  = economic_df_2300,
+#   scenarios    = scenarios_to_compare,
+#   cdr_grid     = free_time_grid,
+#   n_sample     = 3,
+#   g_initial    = g_initial,
+#   t_start      = t_start
+# )
+
+# ------------------------------------------------------------------------------
+# Full sweep (mitigation zeroed so CDR is the sole control, matching the
+# fixed-time CDR scale sensitivity)
+# ------------------------------------------------------------------------------
+free_time_scale_results <- run_free_time_scale_sensitivity(
+  parameter_df                  = parameter_df[1, ],
+  emissions_df                  = emissions_df_2300,
+  economic_df                   = economic_df_2300,
+  scenarios                     = scenarios_to_compare,
+  cdr_grid                      = free_time_grid,
+  g_initial                     = g_initial,
+  t_start                       = t_start,
+  t_max                         = 2300,
+  use_mitigation_capacity_limit = TRUE,
+  mitigation_capacity_function  = make_zero_capacity(),
+  use_parallel                  = TRUE,
+  save_results                  = TRUE,
+  verbose                       = FALSE
+)
+
+# Quick look: how many extra years past 2100 does each infeasible cell need?
+with(free_time_scale_results$combined_results, {
+  cat("Feasible by 2100:      ", sum(optimum_type == "feasible_by_2100", na.rm = TRUE), "\n")
+  cat("Return in 2101-2300:   ", sum(feasible & T_star > 2100, na.rm = TRUE), "\n")
+  cat("No return by 2300:     ", sum(!feasible), "\n")
+})
+```
+
+```{r free_time_scale_sensitivity_visualisation, eval=FALSE}
+# ==============================================================================
+# CDR Scale Free-Terminal-Time Visualisation — Return Year Heatmap
+# ==============================================================================
+# Heatmap of the return year T_star across the K/r grid, one panel per SSP
+# scenario present in the results. Colour scale is fixed to [2100, 2300] (the
+# free-time search horizon) rather than data-driven, so shading is directly
+# comparable across scenarios and figures. Cells with no return achieved
+# within the horizon (feasible = FALSE) are shown grey with a red "x".
+# OUTPUTS: Saved automatically to figs/ directory
+
+source(here::here("src", "cdr_scale_sensitivity_visualisation.R"))  # shared theme/helpers
+source(here::here("src", "cdr_scale_free_time_visualisation.R"))
+
+if (!exists("free_time_scale_results")) {
+  stop("free_time_scale_results not found. ",
+       "Please run the free_time_scale_sensitivity_analysis chunk first.")
+}
+
+free_time_year_heatmap <- create_free_time_year_heatmap(
+  sensitivity_results = free_time_scale_results,
+  year_limits         = c(2100, 2300),
+  show_infeasible     = TRUE,
+  save_plot           = TRUE,
+  width               = 297,
+  height              = 100,
+  verbose             = TRUE
+)
+
+print(free_time_year_heatmap)
 ```
 
 
@@ -1004,7 +1181,7 @@ if (!exists("capacity_growth_results")) {
 # USER CHOICE: Dashboard display options
 capacity_dashboard <- create_capacity_scenario_comparison_dashboard(
   capacity_results    = capacity_growth_results,
-  show_capacity_limit = FALSE,
+  show_capacity_limit = TRUE,
   save_plot           = TRUE,
   width               = 297,   # A4 landscape width (mm)
   height              = 210,
@@ -1238,6 +1415,165 @@ cdr_delay_growth_dashboard <- create_cdr_delay_growth_dashboard(
 )
 
 print(cdr_delay_growth_dashboard)
+```
+
+```{r delayed_deployment_capacity_analysis, eval=FALSE}
+# ==============================================================================
+# Delayed Deployment Analysis with CDR Capacity Constraint
+# ==============================================================================
+# Combines the delayed_deployment_analysis grid (mitigation_delay x cdr_delay)
+# with the CDR logistic capacity cap from the capacity-constrained scenario
+# comparison. Mitigation remains a free, unconstrained control (only delayed);
+# CDR is both delayed AND capped by a logistic growth curve, so its ramp-up
+# speed is limited by the chosen capacity level (slow/moderate/fast).
+#
+# REQUIREMENTS: Must use single parameter set (parameter_df with 1 row)
+# OUTPUTS: Per-capacity-level RDS + combined RDS/CSV saved to output/
+# RUNTIME: No bespoke fast solver exists for delay x capacity combinations, so
+#          this uses the general capacity-aware solver and is much slower per
+#          combination than delayed_deployment_analysis. Measured: ~0.175 min
+#          per scenario comparison (5 SSPs in parallel):
+#          step_size=20, max_delay=20 (2x2x3=12 comparisons)   => 2.1 min (measured)
+#          step_size=10, max_delay=70 (8x8x3=192 comparisons)  => 33.3 min (measured)
+#          step_size=5,  max_delay=70 (15x15x3=675 comparisons) => ~2 hrs (est.)
+#          step_size=1,  max_delay=70 (71x71x3=15123 comparisons) => ~1.8 days, do not use
+#          Use a larger step size for exploratory runs; only drop to smaller
+#          step sizes for final publication figures with time to spare.
+
+source(here::here("src", "optimal_control_capacity.R"))
+source(here::here("src", "scenario_comparison_capacity.R"))
+source(here::here("src", "capacity_helpers.R"))
+source(here::here("src", "delayed_deployment_capacity.R"))
+
+# USER CHOICE: Delay range and granularity (applies to BOTH mitigation and CDR delay)
+max_delay_years <- 70        # Maximum delay to test (years)
+delay_step_size <- 10        # Step size — larger for testing, 1 for publication (see runtime note above)
+
+# USER CHOICE: Scenarios to analyse
+scenarios_to_compare <- c("SSP1-Baseline", "SSP2-Baseline", "SSP3-Baseline",
+                          "SSP4-Baseline", "SSP5-Baseline")
+
+# USER CHOICE: Named CDR growth rates defining the capacity levels to compare
+# Common values: slow ≈ 0.05, moderate ≈ 0.07, fast ≈ 0.11
+cdr_r_values <- c(
+  slow     = 0.05,
+  moderate = 0.07,
+  fast     = 0.11
+)
+
+# USER CHOICE: Shared CDR logistic parameters (fixed across all capacity levels)
+cdr_g_initial <- 2     # Starting CDR deployment level (GtCO2/year)
+cdr_K         <- 100   # Maximum CDR carrying capacity (GtCO2/year)
+cdr_t_start   <- 2025  # Year CDR deployment nominally begins
+
+delayed_deployment_capacity_results <- run_delayed_deployment_capacity_analysis(
+  parameter_df    = parameter_df[1, ],
+  emissions_df    = emissions_df,
+  economic_df     = economic_df,
+  scenarios       = scenarios_to_compare,
+  r_values        = cdr_r_values,
+  K               = cdr_K,
+  g_initial       = cdr_g_initial,
+  t_start         = cdr_t_start,
+  max_delay_years = max_delay_years,
+  delay_step_size = delay_step_size,
+  use_parallel    = TRUE,
+  save_results    = TRUE,
+  verbose         = TRUE
+)
+
+# Display summary
+cat("\n=== DELAYED DEPLOYMENT + CAPACITY ANALYSIS COMPLETE ===\n")
+cat("Delay range tested: 0 -", max_delay_years, "years (step:", delay_step_size, ")\n")
+cat("Capacity levels:", paste(names(cdr_r_values), collapse = ", "), "\n")
+cat("Total rows:", nrow(delayed_deployment_capacity_results$combined_results), "\n")
+```
+
+```{r delayed_deployment_capacity_visualisation, eval=FALSE}
+# ==============================================================================
+# Delayed Deployment with CDR Capacity — Visualisation
+# ==============================================================================
+# Reuses the same heatmap dashboard function as delayed_deployment_visualisation,
+# producing one dashboard per CDR capacity level (slow/moderate/fast). Each
+# dashboard is placed on its own page within a single multi-page PDF.
+# OUTPUTS: Saved automatically to figs/ directory
+
+source(here::here("src", "delayed_deployment_visualisation.R"))
+
+if (!exists("delayed_deployment_capacity_results")) {
+  stop("delayed_deployment_capacity_results not found. Please run the delayed_deployment_capacity_analysis chunk first.")
+}
+
+# Create abatement cost field (mitig cost + remov_cost)
+delayed_deployment_capacity_results$combined_results <- delayed_deployment_capacity_results$combined_results %>%
+  mutate(abatement_cost = mitig_cost + remov_cost)
+
+capacity_levels <- names(delayed_deployment_capacity_results$results_by_capacity)
+
+# USER CHOICE: Variables to plot (same options as delayed_deployment_visualisation)
+dashboard_variables <- c("peak_temperature", "years_above_1p5")
+
+# USER CHOICE: Output PDF dimensions (A4 landscape, mm)
+pdf_width  <- 297
+pdf_height <- 210
+
+# Compute colour scale limits ONCE across ALL capacity levels (not per-page)
+# so slow/moderate/fast use the exact same scale and are directly comparable
+# at a glance. shared_scale stays FALSE here too -- peak_temperature (°C) and
+# years_above_1p5 (years) still get their own independent scale from each
+# other; what's now shared is each variable's own scale ACROSS the 3 pages.
+global_variable_limits <- calculate_variable_limits(
+  data = delayed_deployment_capacity_results$combined_results,
+  variables = dashboard_variables,
+  shared_scale = FALSE,
+  use_scale_limits = TRUE,
+  scale_limit_percentile = 70,
+  verbose = FALSE
+)
+
+pdf_filename <- paste0("delayed_deployment_capacity_dashboard_",
+                       format(Sys.time(), "%Y%m%d_%H%M%S"), ".pdf")
+pdf_path <- here::here("figs", pdf_filename)
+
+cairo_pdf(pdf_path, width = pdf_width / 25.4, height = pdf_height / 25.4, onefile = TRUE)
+
+for (level in capacity_levels) {
+
+  level_data <- delayed_deployment_capacity_results$combined_results %>%
+    filter(capacity_level == level)
+
+  dashboard <- create_delayed_deployment_dashboard(
+    deployment_results = level_data,
+    variables = dashboard_variables,
+    add_contours = TRUE,
+    contour_alpha = 0.6,
+    add_arrows = FALSE,
+    show_infeasible = FALSE,
+    color_palettes = NULL,
+    # USER CHOICE: shared_scale should only be TRUE when all requested variables
+    # share the same units (e.g. the three cost variables in $ trillion).
+    # peak_temperature (°C) and years_above_1p5 (years) do NOT share units, so
+    # this must stay FALSE -- each row gets its own accurately-scoped legend.
+    shared_scale = FALSE,
+    variable_limits_override = global_variable_limits,
+    save_plot = FALSE,
+    verbose = FALSE
+  )
+
+  # Label each page with which capacity level it shows (create_delayed_deployment_
+  # dashboard()'s own title/subtitle are disabled project-wide, so add it directly)
+  dashboard <- dashboard +
+    patchwork::plot_annotation(
+      title = paste0("CDR Capacity: ", tools::toTitleCase(level)),
+      theme = theme(plot.title = element_text(size = 16, face = "bold", hjust = 0.5))
+    )
+
+  print(dashboard)
+}
+
+dev.off()
+
+cat("Saved multi-page dashboard to:", pdf_path, "\n")
 ```
 
 # ==============================================================================

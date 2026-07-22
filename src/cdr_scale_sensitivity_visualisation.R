@@ -550,8 +550,8 @@ create_cdr_scale_base_heatmap <- function(scenario_data,
                                           show_title   = TRUE,
                                           show_x_label = TRUE,
                                           show_y_label = TRUE,
-                                          x_label      = expression("Maximum capacity (GtCO"[2]*"/year)"),
-                                          y_label      = "Maximum growth rate (%)",
+                                          x_label      = expression("Scale (maximum capacity, GtCO"[2]*"/year)"),
+                                          y_label      = expression("Speed (instrinsic growth rate, %)"),
                                           title_text   = NULL,
                                           theme_object = get_cdr_scale_theme()) {
   
@@ -1129,7 +1129,7 @@ create_cdr_scale_outcome_plot <- function(sensitivity_results,
     p <- ggplot(scen_data, aes(x = K, y = r, fill = outcome)) +
       geom_tile() +
       scale_fill_manual(
-        name   = "Outcome",
+        name   = "Outcome:",
         values = fill_values,
         labels = c(
           no_overshoot  = "No overshoot",
@@ -1153,8 +1153,8 @@ create_cdr_scale_outcome_plot <- function(sensitivity_results,
                          labels = function(x) x * 100) +
       labs(
         title = scen,
-        x     = expression("Maximum capacity (GtCO"[2]*"/year)"),
-        y     = if (show_y) "Maximum growth rate (%)" else NULL,
+        x     = expression("Scale (maximum capacity, GtCO"[2]*"/year)"),
+        y     = if (show_y) "Speed (intrinsic growth rate, %)" else NULL,
         tag   = paste0(panel_label, ")")
       ) +
       shared_theme +

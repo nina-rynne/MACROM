@@ -45,7 +45,7 @@
 # These can be overridden when calling the main function
 DELAYED_DEPLOYMENT_PALETTES <- list(
   peak_temperature = list(option = "plasma", direction = -1),
-  years_above_1p5 = list(option = "plasma", direction = -1),
+  years_above_1p5 = list(option = "viridis", direction = -1),
   abatement_cost = list(option = "viridis", direction = -1),
   temp_cost = list(option = "viridis", direction = -1),
   total_cost = list(option = "viridis", direction = -1),
@@ -2037,134 +2037,186 @@ extract_delayed_deployment_legend <- function(plot_object,
 #' @title Assemble Dashboard from Plot Grid
 #' @description
 #' Arranges individual scenario plots into a complete dashboard using patchwork,
-#' with legend positioned appropriately. Handles both single-row layouts
+#' with legend(s) positioned appropriately. Handles both single-row layouts
 #' (3×2 grid with legend on right) and multi-row layouts (N×5 grid with
-#' legend on bottom).
-#' 
+#' legend on bottom, shared or per-variable).
+#'
+#' Legends are NOT extracted manually (cowplot::get_legend() is unreliable on
+#' ggplot2 >= 3.5, silently returning an empty zeroGrob). Instead, every panel
+#' in plot_grid already carries a hidden (legend.position = "none") guide from
+#' its own scale_fill_*() call, and this function reveals + deduplicates them
+#' using patchwork's native plot_layout(guides = "collect") mechanism.
+#'
 #' The function intelligently determines the layout based on the number of
 #' variables and scenarios, adding blank plots where needed to complete the grid.
-#' 
+#'
 #' @param plot_grid Nested list of plots from create_delayed_deployment_plot_grid()
 #'   Structure: list(variable1 = list(SSP1 = plot, ...), variable2 = list(...))
-#' @param legend_grob Legend grob from extract_delayed_deployment_legend()
 #' @param variables Character vector of variable names (in order)
 #' @param scenarios Character vector of scenario names (in order)
 #' @param legend_position Character string: "right" for single-row, "bottom" for multi-row
 #'   Default is "right"
+#' @param legend_mode Character string: "shared" (default) collects all panels'
+#'   guides into one combined legend for the whole dashboard — correct when all
+#'   variables share a colour scale (shared_scale = TRUE). "per_variable"
+#'   collects each variable's row separately, revealing one legend per row —
+#'   required when variables have independent scales (shared_scale = FALSE) so
+#'   each row's colours are described by its own accurately-scoped legend
+#'   rather than one dashboard-wide legend. Ignored when there is only one
+#'   variable.
 #' @param verbose Logical indicating whether to print assembly information
-#' 
-#' @return Combined patchwork object with all plots and legend
-#' 
+#'
+#' @return Combined patchwork object with all plots and legend(s)
+#'
 #' @details
 #' Layout logic:
 #' - Single variable (1 row): 3 columns × 2 rows, plots A-E, blank F, legend right
-#' - Multiple variables (N rows): 5 columns × N rows, all plots filled, legend bottom
-#' 
+#' - Multiple variables (N rows): 5 columns × N rows, all plots filled, legend
+#'   bottom (shared) or one legend per row (per_variable)
+#'
 #' The function uses patchwork operators:
 #' - `+` to combine plots horizontally
 #' - `/` to combine rows vertically
-#' - `|` to add legend beside main grid
-#' - `plot_layout()` to control relative sizes
-#' 
+#' - `plot_layout(guides = "collect")` + `& theme(legend.position = ...)` to
+#'   reveal and merge each row's (or the whole dashboard's) identical guides
+#' - `wrap_elements(full = ...)` to seal a row+legend unit as opaque before
+#'   nesting it inside the outer vertical stack (per_variable mode only)
+#'
 #' @examples
 #' # Assemble single-row dashboard
 #' dashboard <- assemble_delayed_deployment_dashboard(
 #'   plot_grid = plot_grid,
-#'   legend_grob = legend,
 #'   variables = c("peak_temperature"),
 #'   scenarios = c("SSP1", "SSP2", "SSP3", "SSP4", "SSP5"),
 #'   legend_position = "right"
 #' )
-#' 
-#' # Assemble multi-row dashboard
+#'
+#' # Assemble multi-row dashboard with one shared legend
 #' dashboard <- assemble_delayed_deployment_dashboard(
 #'   plot_grid = plot_grid,
-#'   legend_grob = legend,
 #'   variables = c("total_cost", "abatement_cost", "temp_cost"),
 #'   scenarios = c("SSP1", "SSP2", "SSP3", "SSP4", "SSP5"),
-#'   legend_position = "bottom"
+#'   legend_position = "bottom",
+#'   legend_mode = "shared"
+#' )
+#'
+#' # Assemble multi-row dashboard with independent scales, one legend per row
+#' dashboard <- assemble_delayed_deployment_dashboard(
+#'   plot_grid = plot_grid,
+#'   variables = c("peak_temperature", "years_above_1p5"),
+#'   scenarios = c("SSP1", "SSP2", "SSP3", "SSP4", "SSP5"),
+#'   legend_position = "bottom",
+#'   legend_mode = "per_variable"
 #' )
 assemble_delayed_deployment_dashboard <- function(plot_grid,
-                                                  legend_grob,
                                                   variables,
                                                   scenarios,
                                                   legend_position = "right",
+                                                  legend_mode = "shared",
                                                   verbose = FALSE) {
-  
+
   # Check patchwork is available
   if (!requireNamespace("patchwork", quietly = TRUE)) {
     stop("patchwork package is required for dashboard assembly. Please install it.")
   }
-  
+
+  # NOTE ON LEGENDS: every panel in plot_grid already carries a fully-formed
+  # (but hidden, legend.position = "none") guide from its own scale_fill_*()
+  # call. Rather than extracting a legend from one plot via cowplot::get_legend()
+  # (unreliable on ggplot2 >= 3.5 -- it silently returns an empty zeroGrob due
+  # to changes in ggplot2's internal guide-box structure) we let patchwork
+  # collect the identical hidden guides itself via plot_layout(guides =
+  # "collect") and reveal the one merged result with & theme(legend.position
+  # = ...). This works because "none" only suppresses the guide at render
+  # time -- the underlying Guide object still exists for patchwork to collect.
+
   n_variables <- length(variables)
   n_scenarios <- length(scenarios)
-  
+
   if (verbose) {
     cat(sprintf("Assembling dashboard: %d variable(s) × %d scenario(s)\n",
                 n_variables, n_scenarios))
   }
-  
+
+  legend_theme <- if (legend_position == "right") {
+    theme(
+      legend.position   = "right",
+      legend.title      = element_text(size = 10),
+      legend.text       = element_text(size = 9)
+    )
+  } else {
+    theme(
+      legend.position    = "bottom",
+      legend.key.width   = unit(2.2, "cm"),  # Width of the color bar
+      legend.key.height  = unit(0.4, "cm"),  # Height of the color bar
+      legend.title       = element_text(size = 8),
+      legend.text        = element_text(size = 7)
+    )
+  }
+
   # Determine layout type
   if (n_variables == 1) {
     # Single-row layout: 3×2 grid with blank spot
     if (verbose) {
       cat("Layout: 3×2 grid (single variable) with legend on right\n")
     }
-    
+
     variable <- variables[1]
-    
+
     # Get plots for the single variable
     row1_plots <- list()
     row2_plots <- list()
-    
+
     for (i in 1:min(3, n_scenarios)) {
       if (i <= n_scenarios) {
         row1_plots[[i]] <- plot_grid[[variable]][[scenarios[i]]]
       }
     }
-    
+
     for (i in 4:min(6, n_scenarios)) {
       if (i <= n_scenarios) {
         row2_plots[[i-3]] <- plot_grid[[variable]][[scenarios[i]]]
       }
     }
-    
+
     # Add blank plot if needed (position F for 5 scenarios)
     if (n_scenarios == 5) {
-      blank_plot <- ggplot() + 
+      blank_plot <- ggplot() +
         theme_void() +
         theme(panel.background = element_rect(fill = "white", color = NA))
       row2_plots[[3]] <- blank_plot
     }
-    
+
     # Combine rows
     row1_combined <- Reduce(`+`, row1_plots)
     row2_combined <- Reduce(`+`, row2_plots)
-    
-    # Combine rows vertically
+
+    # Combine rows vertically, then collect the identical per-panel guides
+    # into one legend revealed on the right
     main_grid <- row1_combined / row2_combined
-    
-    # Add legend to right
-    combined_plot <- main_grid | legend_grob
-    combined_plot <- combined_plot + patchwork::plot_layout(widths = c(10, 1))
-    
+    combined_plot <- main_grid +
+      patchwork::plot_layout(guides = "collect") &
+      legend_theme
+
   } else {
-    # Multi-row layout: N rows × 5 columns with legend on bottom
+    # Multi-row layout: N rows × 5 columns, legend on bottom (shared or per-row)
     if (verbose) {
-      cat(sprintf("Layout: %d×5 grid (multi-variable) with legend on bottom\n", n_variables))
+      cat(sprintf("Layout: %d×5 grid (multi-variable) with legend on bottom (%s)\n",
+                  n_variables, legend_mode))
     }
-    
+
     # Build rows - each row contains all scenarios for one variable
     row_plots <- list()
-    
+
     for (var_idx in seq_along(variables)) {
       variable <- variables[var_idx]
-      
-      # Get all scenario plots for this variable
+
+      # Get all scenario plots for this variable, with tight spacing applied
       scenario_plots <- lapply(scenarios, function(scen) {
-        plot_grid[[variable]][[scen]]
+        plot_grid[[variable]][[scen]] +
+          theme(plot.margin = unit(c(1, 2, 3, 2), "mm"))
       })
-      
+
       # Combine horizontally using explicit pipe operator
       # For 5 scenarios: p1 | p2 | p3 | p4 | p5
       if (length(scenario_plots) == 1) {
@@ -2178,10 +2230,27 @@ assemble_delayed_deployment_dashboard <- function(plot_grid,
       } else if (length(scenario_plots) == 5) {
         row_combined <- scenario_plots[[1]] | scenario_plots[[2]] | scenario_plots[[3]] | scenario_plots[[4]] | scenario_plots[[5]]
       }
-      
+
+      # Per-variable legend mode: collect this row's own identical guides
+      # into one legend revealed at the bottom of THIS row, so independent
+      # scales are each described by their own accurately-scoped legend
+      # rather than one legend for the whole dashboard. wrap_elements()
+      # seals the row+legend composite into a single opaque unit -- without
+      # it, nesting a patch with its own plot_layout()/guide collection
+      # inside the outer row stack lets patchwork re-flatten/re-count its
+      # internal panels and guides, which conflicts with the outer layout's
+      # own (separate) collection and throws a wrap_dims() panel-count
+      # mismatch error.
+      if (legend_mode == "per_variable") {
+        row_combined <- row_combined +
+          patchwork::plot_layout(guides = "collect") &
+          legend_theme
+        row_combined <- patchwork::wrap_elements(full = row_combined)
+      }
+
       row_plots[[var_idx]] <- row_combined
     }
-    
+
     # Combine all rows vertically using /
     if (length(row_plots) == 1) {
       main_grid <- row_plots[[1]]
@@ -2194,21 +2263,18 @@ assemble_delayed_deployment_dashboard <- function(plot_grid,
     } else if (length(row_plots) == 5) {
       main_grid <- row_plots[[1]] / row_plots[[2]] / row_plots[[3]] / row_plots[[4]] / row_plots[[5]]
     }
-    
-    # Apply tight spacing to main grid with extra bottom margin for legend clearance
-    main_grid <- main_grid + plot_layout() & 
-      theme(plot.margin = unit(c(1, 2, 3, 2), "mm"))  # Extra bottom margin to prevent legend overlap
-    
-    # Add legend to bottom
-    combined_plot <- main_grid / legend_grob
-    
-    # Set relative heights (main grid gets most space, legend gets small but readable strip)
-    height_ratios <- c(rep(1, n_variables), 0.12)
-    combined_plot <- combined_plot + patchwork::plot_layout(
-      heights = height_ratios,
-      design = NULL
-    ) +
-      theme(plot.margin = margin(0, 0, 0, 0))  # Remove plot margins to reduce spacing
+
+    if (legend_mode == "per_variable") {
+      # Each row already carries its own collected legend; nothing more to attach
+      combined_plot <- main_grid
+    } else {
+      # Collect the identical guides across ALL rows into one legend at the
+      # bottom of the whole dashboard (correct when shared_scale = TRUE, since
+      # every row then uses the same limits/palette and so the same guide)
+      combined_plot <- main_grid +
+        patchwork::plot_layout(guides = "collect") &
+        legend_theme
+    }
   }
   
   if (verbose) {
@@ -2476,6 +2542,16 @@ save_delayed_deployment_dashboard <- function(plot_object,
 #'   colour scale when use_scale_limits = TRUE. For example, 95 means the colour
 #'   scale spans from minimum to 95th percentile, with all higher values shown
 #'   as the maximum colour. Default is 95.
+#' @param variable_limits_override Optional pre-computed limits list (the same
+#'   structure returned by calculate_variable_limits(), e.g. list(shared =
+#'   c(min, max)) or list(var1 = c(min, max), var2 = c(min, max))). When
+#'   supplied, this is used directly and shared_scale/use_scale_limits/
+#'   scale_limit_percentile are skipped entirely. Useful for forcing several
+#'   separate dashboard calls (e.g. one per page/scenario subset) to share
+#'   the exact same colour scale for direct visual comparison across pages --
+#'   compute once via calculate_variable_limits() on the full combined
+#'   dataset, then pass the result into each call. Default is NULL (limits
+#'   are calculated per-call from that call's own data).
 #' @param add_contours Logical indicating whether to add contour lines (default: TRUE)
 #' @param contour_breaks Either "auto" for automatic calculation or a named list
 #'   of numeric vectors specifying breaks for each variable. Default is "auto".
@@ -2584,6 +2660,7 @@ create_delayed_deployment_dashboard <- function(deployment_results,
                                                 shared_scale = FALSE,
                                                 use_scale_limits = FALSE,
                                                 scale_limit_percentile = 95,
+                                                variable_limits_override = NULL,
                                                 add_contours = TRUE,
                                                 contour_breaks = "auto",
                                                 contour_alpha = 0.6,
@@ -2687,18 +2764,25 @@ create_delayed_deployment_dashboard <- function(deployment_results,
   # Step 4: Determine color scale limits
   # ============================================================================
   
-  if (verbose) {
-    cat("\nStep 4: Calculating color scale limits\n")
+  if (!is.null(variable_limits_override)) {
+    if (verbose) {
+      cat("\nStep 4: Using externally supplied variable_limits_override (skipping auto-calculation)\n")
+    }
+    variable_limits <- variable_limits_override
+  } else {
+    if (verbose) {
+      cat("\nStep 4: Calculating color scale limits\n")
+    }
+
+    variable_limits <- calculate_variable_limits(
+      data = plot_data,
+      variables = variables,
+      shared_scale = shared_scale,
+      use_scale_limits = use_scale_limits,
+      scale_limit_percentile = scale_limit_percentile,
+      verbose = verbose
+    )
   }
-  
-  variable_limits <- calculate_variable_limits(
-    data = plot_data,
-    variables = variables,
-    shared_scale = shared_scale,
-    use_scale_limits = use_scale_limits,
-    scale_limit_percentile = scale_limit_percentile,
-    verbose = verbose
-  )
   
   # ============================================================================
   # Step 5: Get palette and label information
@@ -2721,7 +2805,23 @@ create_delayed_deployment_dashboard <- function(deployment_results,
   for (var in variables) {
     variable_labels[[var]] <- get_variable_label(var, custom_labels, single_line = use_single_line)
   }
-  
+
+  # When shared_scale = TRUE across multiple variables, every panel must use
+  # an IDENTICAL legend label (not just identical limits/palette) for
+  # patchwork's plot_layout(guides = "collect") to merge them into one
+  # legend -- a different title per variable (e.g. "Total Cost" vs
+  # "Temperature Damage Cost") makes the guides distinct, so patchwork
+  # correctly keeps them separate rather than merging mismatched legends.
+  # Fall back to the generic "cost" label (the only built-in shared_scale
+  # use case today); pass custom_labels = list(cost = "...") to override for
+  # any other same-units combination.
+  if (shared_scale && length(variables) > 1) {
+    shared_label <- get_variable_label("cost", custom_labels, single_line = use_single_line)
+    for (var in variables) {
+      variable_labels[[var]] <- shared_label
+    }
+  }
+
   if (verbose) {
     cat(sprintf("  Configured %d variable(s)\n", length(variables)))
   }
@@ -2755,81 +2855,45 @@ create_delayed_deployment_dashboard <- function(deployment_results,
   )
   
   # ============================================================================
-  # Step 7: Extract and position legend
+  # Step 7: Determine legend layout
   # ============================================================================
-  
-  if (verbose) {
-    cat("\nStep 7: Extracting legend\n")
-  }
-  
-  # Create a plot with legend visible for extraction
-  first_variable <- variables[1]
-  first_scenario <- SSP_SCENARIO_ORDER[1]
-  
-  # Get first plot data for legend extraction
-  legend_data <- plot_data %>% filter(scenario_short == first_scenario)
-  
-  # Determine legend position for final layout FIRST
+  #
+  # A multi-variable dashboard with shared_scale = FALSE means each variable's
+  # row uses its own independent colour scale (e.g. peak_temperature in °C vs
+  # years_above_1p5 in years) — one combined legend would only describe the
+  # first variable and misrepresent (or omit) the rest, so each row needs its
+  # own legend. shared_scale = TRUE (e.g. comparing cost components on one $
+  # scale) keeps a single combined legend, since it correctly describes every
+  # row. Legends themselves are collected directly from plot_grid's hidden
+  # per-panel guides inside assemble_delayed_deployment_dashboard() (see that
+  # function for why -- cowplot::get_legend() is unreliable on this ggplot2
+  # version), so there is nothing to build here.
+
   legend_position <- if (length(variables) == 1) "right" else "bottom"
-  
-  # Create temporary plot with legend in the correct position
-  temp_plot <- create_delayed_deployment_base_heatmap(
-    scenario_data = legend_data,
-    variable = first_variable,
-    variable_limits = if ("shared" %in% names(variable_limits)) {
-      variable_limits$shared
-    } else {
-      variable_limits[[first_variable]]
-    },
-    palette_info = palette_info[[first_variable]],
-    variable_label = variable_labels[[first_variable]],
-    scenario_name = first_scenario,
-    show_title = FALSE,
-    theme_object = get_delayed_deployment_theme(multi_row = length(variables) > 1)
-  )
-  
-  # Add legend to theme with appropriate sizing
-  if (length(variables) == 1) {
-    # Right legend for single variable
-    temp_plot <- temp_plot + theme(legend.position = "right")
-  } else {
-    # Bottom legend for multiple variables - make it smaller
-    temp_plot <- temp_plot + theme(
-      legend.position = "bottom",
-      legend.key.width = unit(2, "cm"),   # Width of the color bar
-      legend.key.height = unit(0.3, "cm"), # Height of the color bar (make this smaller)
-      legend.title = element_text(size = 6),
-      legend.text = element_text(size = 5.5)
-    )
-  }
-  
-  # Determine legend position for final layout
-  legend_position <- if (length(variables) == 1) "right" else "bottom"
-  
-  # Extract legend
-  legend_grob <- extract_delayed_deployment_legend(
-    plot_object = temp_plot,
-    legend_position = legend_position
-  )
-  
+
+  # One legend per variable only when scales are independent AND there's
+  # more than one row to mis-describe
+  per_variable_legend <- (length(variables) > 1) && !shared_scale
+
   if (verbose) {
-    cat(sprintf("  Legend position: %s\n", legend_position))
+    cat(sprintf("\nStep 7: Legend position: %s%s\n", legend_position,
+                if (per_variable_legend) " (one per variable)" else " (shared/combined)"))
   }
-  
+
   # ============================================================================
   # Step 8: Assemble dashboard with patchwork
   # ============================================================================
-  
+
   if (verbose) {
     cat("\nStep 8: Assembling dashboard\n")
   }
-  
+
   dashboard <- assemble_delayed_deployment_dashboard(
     plot_grid = plot_grid,
-    legend_grob = legend_grob,
     variables = variables,
     scenarios = SSP_SCENARIO_ORDER,
     legend_position = legend_position,
+    legend_mode = if (per_variable_legend) "per_variable" else "shared",
     verbose = verbose
   )
   

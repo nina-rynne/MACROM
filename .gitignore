@@ -10,3 +10,6 @@ README.html
 /src/optimal_control_isoperimetric.R
 deployment_curve.Rmd
 /scratch
+Rplots.pdf
+/data
+/data-raw
