@@ -18,70 +18,88 @@
 # Description:
 # Converts MACROM's fixed-endpoint, fixed-time optimal control problem
 # (x(T) = target_emissions at T = 2100) into a free-terminal-time problem:
-# find the cost-optimal year T* at which the return to the 1.5°C target is
-# achieved. Reference: Lenhart & Workman, "Optimal Control Applied to
-# Biological Models", Ch. 20 (Free Terminal Time) and Ch. 21.4/21.5 (Adapted
-# Forward-Backward Sweep).
+# find the cost-optimal year T* at which cumulative emissions first return to
+# the 1.5°C-consistent target, for K/r combinations that cannot reach it by
+# 2100 at all (see cdr_scale_free_time_sensitivity.R for the stage-1 gate that
+# decides which cells reach this solver).
 #
-# EMPIRICAL FINDING (Phase 2 validation, July 2026): for the MACROM cost
-# structure (positive discounted damages every year, CDR capacity-limited),
-# the minimized cost V(T) of returning by year T is monotone INCREASING in T
-# across the entire feasible range: H(T) = dV/dT > 0 everywhere (verified
-# numerically: computed H matches finite-difference dV/dT). Delaying the
-# return is never cost-optimal, so the optimum usually sits at the BOUNDARY
-# of the feasible set — the earliest year a genuine return is achievable —
-# rather than at an interior H(T*) = 0 crossing. This solver therefore
-# reports three optimum types:
-#   - "interior":          H(T) sign change found and refined per the book
-#   - "boundary_earliest": all valid H(T) > 0; T* = earliest feasible return
-#                          year (feasibility edge refined to 1-year resolution)
-#   - "boundary_latest":   all valid H(T) < 0; T* = latest feasible year
-#                          (would indicate delay always pays; not observed)
-# H(T*) is reported in all cases; for boundary_earliest it is positive and
-# measures the cost (trillion $/yr) of each year of delay beyond T*.
+# WHAT T* MEANS: T* is the year the historical backlog of overshoot emissions
+# (accumulated while CDR capacity was still ramping up) is first cleared. It
+# does NOT mean emissions or CDR deployment stop at T* -- cumulative emissions
+# keep evolving after T*, same as always. What stops is the SCOPE of this
+# optimization: the model only prices the cost of clearing the backlog, and is
+# silent on the (comparatively simple) maintenance problem of keeping sources
+# and sinks balanced once the target is first reached. This mirrors the
+# classical free-terminal-time convention (Lenhart & Workman, "Optimal Control
+# Applied to Biological Models", Ch. 20 -- e.g. disease treatment, where the
+# state is "cured" at T*): the optimization's horizon ends at the terminal
+# event even though the underlying state continues to evolve after it in
+# reality.
 #
-# RETURN-FROM-ABOVE FILTER: the raw endpoint constraint x(T) = target admits
-# degenerate early solutions that end exactly as cumulative emissions FIRST
-# reach the budget (temperature still rising through 1.5°C, near-zero CDR,
-# lambda(T) ~ 0). These say nothing about overshoot recovery, so by default
-# a candidate year is only valid when annual net emissions at T are negative
-# — cumulative emissions falling back through the target from above,
-# i.e. temperature returning to 1.5°C after overshoot. Disable with
-# require_return_from_above = FALSE to reproduce the raw constraint.
+# WHY THIS ISN'T AN EQUALITY-CONSTRAINED PROBLEM: an earlier version of this
+# solver searched for a year T where x(T) = target held exactly, using the
+# transversality condition H(T) = dV/dT = 0 (or its boundary form) from
+# Lenhart & Workman Ch. 20. That formulation is degenerate here because, for
+# strong-CDR cells, x(T) = target can hold at MULTIPLE T's: a genuine descent
+# through the target, followed by overshoot below it, followed by drifting
+# back UP to touch the target again later "from below" as CDR eases off. A
+# per-candidate-year require_return_from_above filter was added to reject the
+# "from below" touches, but it only had years actually sampled by a coarse
+# pre-scan grid to work with -- and for strong enough CDR, the genuine
+# descending crossing fell entirely inside a single unsampled gap in that
+# grid, so the search found no valid year anywhere and wrongly reported the
+# cell infeasible.
 #
-# The necessary conditions are unchanged from the fixed-time case (control
-# characterisation, adjoint ODE, shooting on lambda(T) to hit the emissions
-# target) PLUS one new transversality condition at the optimal terminal time:
+# THE FIX: reframe the question as minimum-cost-to-first-reach-a-target-SET
+# (x(T) <= target, an inequality) rather than minimum-cost-to-hit-an-exact-
+# VALUE (x(T) = target, an equality). Two facts make this well-posed and
+# simple to solve:
+#   1. EMPIRICAL FINDING (Phase 2 validation, July 2026): for the MACROM cost
+#      structure (positive discounted damages every year, CDR capacity-
+#      limited), the minimized cost of returning by year T is monotone
+#      INCREASING in T -- delaying the return is never cost-optimal. So the
+#      cost-optimal T is always the EARLIEST year the target is achievable,
+#      never a later one.
+#   2. At the TRUE earliest achievable year, arrival is GUARANTEED to be a
+#      genuine descent from above: an instant earlier the target wasn't
+#      achievable at all (cumulative emissions were still above budget, with
+#      no control path able to bring them down in time), so the earliest
+#      achievable year cannot be a later, already-past, drifted-back-up
+#      touch -- that would contradict it being the earliest. No per-year
+#      "arrived from above" filter is needed; it is a structural consequence
+#      of asking for the EARLIEST reachable year specifically.
 #
-#   H(T*) = f(T*) + lambda(T*) * g(T*) = 0
+# Because "is the target achievable by year T" (does the inner fixed-endpoint
+# shooting solve converge within tolerance) is a monotonic property of T --
+# false for every T before the true crossing, true for every T at or after it
+# -- the earliest such T is found by plain integer BISECTION, no coarse
+# pre-scan grid required and no risk of stepping over a narrow window:
+# typically 7-8 inner solves regardless of how wide [t_min, t_max] is.
 #
-# where f is the discounted running cost (total_costs_annual) and
-# g = baseline_emissions - u_m - u_r is the state dynamics. This condition is
-# informative here only because the problem is non-autonomous (discounting and
-# time-varying baseline data).
+# Numerical method: nested search. The OUTER loop is integer bisection on
+# reachability, driving the bracket [not-yet-achievable, achievable] down to
+# adjacent years; the INNER loop is the existing, unmodified
+# optimal_control_shooting() from optimal_control_capacity.R, driving the
+# emissions gap -> 0 for each candidate T. Because the model uses an annual
+# grid (dt = 1), T is effectively discrete: candidate years are rounded to
+# integers and reachability is memoized per year so no year is ever re-solved.
 #
-# Numerical method: nested shooting. The OUTER loop is a secant search on the
-# terminal year T driving H(T) -> 0; the INNER loop is the existing,
-# unmodified optimal_control_shooting() from optimal_control_capacity.R
-# driving the emissions gap -> 0 for each candidate T. Because the model uses
-# an annual grid (dt = 1), T is effectively discrete: candidate years are
-# rounded to integers, H(T) is memoized per year, and outer convergence is
-# declared when the sign-change bracket collapses to adjacent years.
-#
-# This machinery was validated against the analytic free-terminal-time
-# solution of Lenhart & Workman Example 20.1 in
-# scratch/free_terminal_time_validation.R before being applied here.
+# compute_terminal_hamiltonian() (Section 1) is retained and still reported
+# per solution (hamiltonian_at_T_star) as a diagnostic -- it is the marginal
+# cost, in trillion $/yr, of delaying the return one year beyond T* -- but it
+# no longer drives the search; H(T) > 0 everywhere is now a documented
+# empirical property used to justify the bisection shortcut, not something
+# recomputed and sign-tested at every candidate year.
 #
 # DEPENDENCIES: optimal_control_capacity.R must be sourced in the session
 # before calling optimal_control_free_terminal_time(). Do NOT source
 # optimal_control_core.R alongside it — both define same-named functions, and
 # the capacity-aware version is the one used throughout this analysis chain.
 # The extended-horizon emissions/economic data frames should be built with
-# interpolate_ssp_emissions()/interpolate_ssp_economic() using end_year = 2200
-# (baseline data beyond 2100 are flat-lined at their 2100 values via
-# approx(..., rule = 2)).
+# interpolate_ssp_emissions()/interpolate_ssp_economic() using an end_year
+# that covers the full [t_min, t_max] search range.
 #
-# Version: 1.0.0
+# Version: 2.0.0
 # Last updated: July 2026
 # ==============================================================================
 
@@ -145,38 +163,22 @@ truncate_scenario_data <- function(emissions_df, economic_df, t_max) {
 # Section 3: Free Terminal Time Solver
 # ==============================================================================
 
-#' @title Free Terminal Time Optimal Control via Nested Shooting
+#' @title Free Terminal Time Optimal Control via Bisection on Reachability
 #' @description
-#' Finds the cost-optimal terminal year T* at which cumulative emissions reach
-#' target_emissions via a genuine return from overshoot. The outer search
-#' evaluates the terminal Hamiltonian H(T) = dV/dT over integer candidate
-#' years; each candidate is evaluated by truncating the scenario data to that
+#' Finds T*, the earliest year at which cumulative emissions can first be
+#' brought down to target_emissions via a genuine descent from overshoot
+#' (see file header for why this is both the cost-optimal year and
+#' guaranteed to arrive "from above", with no separate filter required).
+#'
+#' Each candidate year T is evaluated by truncating the scenario data to that
 #' horizon and solving the fixed-endpoint problem with the EXISTING
-#' optimal_control_shooting() (inner loop, unmodified).
-#'
-#' If H(T) changes sign, the interior optimum is refined by secant (per
-#' Lenhart & Workman). If H(T) > 0 at every valid candidate — the typical
-#' MACROM case, see file header — the optimum is the boundary of the feasible
-#' set: T* = earliest year a return is achievable, located by integer
-#' bisection of the feasibility edge. optimum_type in the returned list says
-#' which case occurred.
-#'
-#' Robustness measures (the outer search is the hardest-converging piece of
-#' the method, per Lenhart & Workman):
-#' - T candidates never fall at or before deployment start (t_min default is
-#'   start_year + max(delays) + 5-year buffer)
-#' - A coarse pre-scan across [t_min, t_max] first maps out H(T), confirms
-#'   whether a sign change exists, and supplies the secant bracket or the
-#'   feasibility-edge bisection interval; with no valid candidate anywhere
-#'   the combination is reported infeasible rather than searched blindly
-#' - Candidate years where the inner shooting fails to converge, misses the
-#'   target, or (by default) arrives at the target from below are treated as
-#'   unusable and skipped, not treated as valid H(T) evaluations
-#' - Secant steps that leave the bracket (or revisit an evaluated year) fall
-#'   back to bisection; H(T) is memoized per integer year so no year is ever
-#'   re-solved
-#' - A running best (minimum |H|) result is kept so a non-converged search
-#'   still returns its closest attempt with diagnostics
+#' optimal_control_shooting() (inner loop, unmodified): T is "reachable" if
+#' that inner solve converges and hits target_emissions within
+#' inner_gap_tolerance. Reachability is monotone in T (false, false, ...,
+#' false, true, true, ..., true), so the earliest reachable year is found by
+#' plain integer bisection between a known-unreachable year (t_min) and a
+#' known-reachable one (t_max) -- no coarse pre-scan grid, no risk of
+#' stepping over a narrow feasible window.
 #'
 #' @param parameter_df Single-row data frame containing all model parameters
 #' @param emissions_df Data frame with emissions data extending to t_max
@@ -185,9 +187,12 @@ truncate_scenario_data <- function(emissions_df, economic_df, t_max) {
 #' @param scenario Scenario name to filter data (e.g. "SSP2-Baseline")
 #' @param target_emissions Target cumulative emissions (GtCO2). Default NULL
 #'   uses co2_target_2100 from parameter_df.
-#' @param t_min Earliest candidate terminal year. Default NULL uses
-#'   start_year + max(mitigation_delay_years, cdr_delay_years) + 5.
-#' @param t_max Latest candidate terminal year (default: 2200)
+#' @param t_min Earliest candidate terminal year -- must be genuinely
+#'   unreachable (a buffer past deployment start, not the true crossing).
+#'   Default NULL uses start_year + max(mitigation_delay_years,
+#'   cdr_delay_years) + 5.
+#' @param t_max Latest candidate terminal year (default: 2200). Must be
+#'   reachable, or the cell is reported infeasible.
 #' @param mitigation_delay_years Years to delay mitigation deployment (default: 0)
 #' @param cdr_delay_years Years to delay CDR deployment (default: 0)
 #' @param use_mitigation_capacity_limit Passed through to the inner solver
@@ -197,61 +202,43 @@ truncate_scenario_data <- function(emissions_df, economic_df, t_max) {
 #' @param use_cdr_capacity_limit Passed through to the inner solver
 #'   (default: FALSE)
 #' @param cdr_capacity_function Passed through to the inner solver (default: NULL)
-#' @param prescan_step Coarse pre-scan spacing in years (default: 15)
 #' @param inner_gap_tolerance Max |emission_gap| (GtCO2) for an inner solve to
-#'   count as a valid H(T) evaluation (default: 1.0, matching the inner
-#'   shooting_tolerance)
-#' @param require_return_from_above Logical (default TRUE): a candidate year
-#'   is only valid when annual net emissions at T are negative, i.e. the
-#'   trajectory arrives at the emissions target from above (temperature
-#'   falling back through 1.5°C after overshoot). Set FALSE to accept any
-#'   solution with x(T) = target, including degenerate endings where the
-#'   budget is first exhausted with temperature still rising.
-#' @param max_outer_iterations Cap on outer secant/bisection iterations
-#'   (default: 40)
-#' @param outer_tolerance |H| below which the outer search stops early
-#'   (default: 0.01, in the same units as total_costs_annual — trillion
-#'   dollars/year). With integer years the usual stopping condition is the
-#'   bracket collapsing to adjacent years, not this tolerance.
+#'   count as "reachable" (default: 1.0, matching the inner shooting_tolerance)
+#' @param max_bisection_iterations Cap on bisection iterations, purely a
+#'   safety net -- an integer bracket of width W converges in ceiling(log2(W))
+#'   steps, e.g. ~8 for a 200-year search range (default: 40)
 #' @param verbose Print progress information (default: TRUE)
 #'
 #' @return List containing:
-#'   - T_star: cost-optimal terminal year (NA if infeasible)
-#'   - optimum_type: "interior" (H = 0 crossing refined by secant),
-#'     "boundary_earliest" (all valid H > 0; T* = earliest feasible return
-#'     year), "boundary_latest" (all valid H < 0; T* = latest feasible year),
-#'     or NA when infeasible
-#'   - converged: TRUE when the search completed (interior bracket narrowed
-#'     to adjacent years / |H| <= outer_tolerance, or boundary edge refined
-#'     to 1-year resolution)
-#'   - feasible: same convention as cdr_scale_sensitivity.R — TRUE only when
-#'     the search converged and the solution at T_star is a valid return
-#'   - hamiltonian_at_T_star: H(T*) (NA if infeasible). For boundary_earliest
-#'     this is positive: the marginal cost (trillion $/yr) of delaying the
-#'     return one year beyond T*.
+#'   - T_star: earliest cost-optimal terminal year (NA if infeasible)
+#'   - optimum_type: "earliest_reachable" if converged, else NA
+#'   - converged: TRUE when bisection found the earliest reachable year
+#'   - feasible: same convention as cdr_scale_sensitivity.R -- TRUE when a
+#'     genuine return is achievable within [t_min, t_max]
+#'   - hamiltonian_at_T_star: H(T*), trillion $/yr -- diagnostic only (the
+#'     marginal cost of delaying the return one further year); does not
+#'     drive T* selection (see file header)
 #'   - solution: full inner solution list at T_star (states, controls, costs
 #'     time series) for plotting; best-effort closest attempt if not converged
-#'   - prescan_trace: data frame of (T, H, valid, inner_converged,
-#'     emission_gap, net_emissions_at_T, final_temperature) from the coarse
-#'     pre-scan, for diagnostic plots of H(T)
-#'   - evaluations: same columns for every year evaluated (pre-scan + secant
-#'     + edge refinement), sorted by T
-#'   - outer_iterations, best_abs_H, t_min, t_max, target_emissions, scenario
-#'   - infeasible_reason plus best-effort diagnostics (min |H| observed,
-#'     final temperature at t_max) when no solution is found
+#'   - evaluations: data frame of (T, reachable, net_emissions_at_T,
+#'     emission_gap, final_temperature) for every year actually evaluated
+#'     during bisection, for diagnostics
+#'   - outer_iterations: number of bisection steps used
+#'   - t_min, t_max, target_emissions, scenario
+#'   - infeasible_reason plus best-effort diagnostics (final temperature at
+#'     t_max) when no solution is found
 #'
 #' @examples
 #' \dontrun{
 #' result <- optimal_control_free_terminal_time(
 #'   parameter_df           = parameter_df[1, ],
-#'   emissions_df           = emissions_df_ext,   # end_year = 2200
-#'   economic_df            = economic_df_ext,    # end_year = 2200
+#'   emissions_df           = emissions_df_ext,   # end_year = 2300
+#'   economic_df            = economic_df_ext,    # end_year = 2300
 #'   scenario               = "SSP2-Baseline",
 #'   use_cdr_capacity_limit = TRUE,
 #'   cdr_capacity_function  = make_logistic_from_zero(2, 100, 0.1, 2025)
 #' )
 #' result$T_star
-#' plot(result$prescan_trace$T, result$prescan_trace$H)
 #' }
 optimal_control_free_terminal_time <- function(parameter_df,
                                                emissions_df,
@@ -266,11 +253,8 @@ optimal_control_free_terminal_time <- function(parameter_df,
                                                mitigation_capacity_function  = NULL,
                                                use_cdr_capacity_limit        = FALSE,
                                                cdr_capacity_function         = NULL,
-                                               prescan_step                  = 15,
                                                inner_gap_tolerance           = 1.0,
-                                               require_return_from_above     = TRUE,
-                                               max_outer_iterations          = 40,
-                                               outer_tolerance               = 0.01,
+                                               max_bisection_iterations      = 40,
                                                verbose                       = TRUE) {
 
   # ============================================================================
@@ -312,8 +296,8 @@ optimal_control_free_terminal_time <- function(parameter_df,
          " (interpolate_ssp_emissions / interpolate_ssp_economic).")
   }
 
-  # T_min: never evaluate a horizon at or before deployment start (initial
-  # search nodes must sit strictly inside the controllable window)
+  # T_min: never evaluate a horizon at or before deployment start (must be a
+  # genuinely unreachable anchor for the bisection, not the true crossing)
   if (is.null(t_min)) {
     t_min <- start_year + max(mitigation_delay_years, cdr_delay_years) + 5
   }
@@ -325,27 +309,22 @@ optimal_control_free_terminal_time <- function(parameter_df,
   }
 
   if (verbose) {
-    cat("=== FREE TERMINAL TIME OPTIMAL CONTROL ===\n")
+    cat("=== FREE TERMINAL TIME OPTIMAL CONTROL (earliest-reachable search) ===\n")
     cat("Scenario:            ", scenario, "\n")
     cat("Target emissions:    ", target_emissions, "GtCO2\n")
-    cat("Terminal year range: [", t_min, ",", t_max, "]\n")
-    cat("Pre-scan step:       ", prescan_step, "years\n\n")
+    cat("Terminal year range: [", t_min, ",", t_max, "]\n\n")
   }
 
   # ============================================================================
-  # Memoized H(T) evaluation via the existing inner shooting solver
+  # Memoized reachability evaluation via the existing inner shooting solver
   # ============================================================================
-  # Each candidate year is solved at most once. An evaluation is valid only
-  # when (a) the inner shooting converged and hit the emissions target within
-  # inner_gap_tolerance, and (b) if require_return_from_above, the trajectory
-  # arrives at the target from above (negative annual net emissions at T —
-  # a genuine post-overshoot return, not the budget being first exhausted
-  # with temperature still rising). Invalid years are skipped by the outer
-  # search.
+  # A candidate year T is "reachable" when the fixed-endpoint problem
+  # truncated to that horizon converges and hits target_emissions within
+  # inner_gap_tolerance. Each year is solved at most once (memoized).
 
   memo <- new.env(parent = emptyenv())
 
-  evaluate_H <- function(T_cand) {
+  evaluate_T <- function(T_cand) {
     T_cand <- as.integer(round(T_cand))
     key <- as.character(T_cand)
     if (!is.null(memo[[key]])) return(memo[[key]])
@@ -371,7 +350,7 @@ optimal_control_free_terminal_time <- function(parameter_df,
       error = function(e) NULL
     )
 
-    inner_ok <- !is.null(result) &&
+    reachable <- !is.null(result) &&
       isTRUE(result$converged) &&
       is.finite(result$emission_gap) &&
       abs(result$emission_gap) <= inner_gap_tolerance
@@ -382,18 +361,15 @@ optimal_control_free_terminal_time <- function(parameter_df,
         result$qty_remov[n]
     } else NA_real_
 
-    ok <- inner_ok &&
-      (!require_return_from_above || net_emissions_at_T < 0)
-
-    out <- list(
-      T        = T_cand,
-      ok       = ok,
-      inner_ok = inner_ok,
-      net_emis = net_emissions_at_T,
-      H        = if (ok) compute_terminal_hamiltonian(result) else NA_real_,
-      sol      = result
-    )
+    out <- list(T = T_cand, reachable = reachable, net_emis = net_emissions_at_T,
+               sol = result)
     memo[[key]] <- out
+
+    if (verbose) {
+      cat(sprintf("  T = %d: %s\n", T_cand,
+                  if (reachable) sprintf("reachable (net emissions %+.2f)", net_emissions_at_T)
+                  else "not reachable"))
+    }
     out
   }
 
@@ -403,11 +379,9 @@ optimal_control_free_terminal_time <- function(parameter_df,
       ev <- memo[[k]]
       data.frame(
         T                  = ev$T,
-        H                  = ev$H,
-        valid              = ev$ok,
-        inner_converged    = ev$inner_ok,
-        emission_gap       = if (!is.null(ev$sol)) ev$sol$emission_gap else NA_real_,
+        reachable          = ev$reachable,
         net_emissions_at_T = ev$net_emis,
+        emission_gap       = if (!is.null(ev$sol)) ev$sol$emission_gap else NA_real_,
         final_temperature  = if (!is.null(ev$sol)) ev$sol$final_temperature else NA_real_
       )
     })
@@ -416,56 +390,42 @@ optimal_control_free_terminal_time <- function(parameter_df,
   }
 
   # ============================================================================
-  # Coarse pre-scan: map H(T) across [t_min, t_max]
-  # ============================================================================
-
-  scan_years <- as.integer(round(unique(c(seq(t_min, t_max, by = prescan_step),
-                                          t_max))))
-
-  if (verbose) cat("Pre-scanning", length(scan_years), "candidate years...\n")
-
-  for (Ts in scan_years) {
-    ev <- evaluate_H(Ts)
-    if (verbose) {
-      if (ev$ok) {
-        cat(sprintf("  T = %d: H = %+.4f\n", Ts, ev$H))
-      } else if (ev$inner_ok) {
-        cat(sprintf("  T = %d: target hit from below (net emissions %+.2f) — not a return, skipped\n",
-                    Ts, ev$net_emis))
-      } else {
-        cat(sprintf("  T = %d: inner shooting failed (skipped)\n", Ts))
-      }
-    }
-  }
-
-  prescan_trace <- collect_evaluations()
-
-  # ============================================================================
   # Shared result assembly
   # ============================================================================
 
-  outer_iterations <- 0L
+  build_result <- function(ev, converged, infeasible_reason = NA_character_,
+                           bisection_iterations = 0L) {
 
-  build_result <- function(ev, converged, optimum_type,
-                           infeasible_reason = NA_character_) {
-    if (verbose && converged) {
-      cat(sprintf("\nConverged (%s): T* = %d, H(T*) = %+.4f (%d outer iterations)\n",
-                  optimum_type, ev$T, ev$H, outer_iterations))
+    if (converged) {
+      H_val <- compute_terminal_hamiltonian(ev$sol)
+      if (verbose) {
+        cat(sprintf("\nEarliest reachable year: T* = %d (H(T*) = %+.4f, %d bisection steps)\n",
+                    ev$T, H_val, bisection_iterations))
+      }
+      # Sanity check: the monotonicity argument in the file header guarantees
+      # arrival from above at the TRUE earliest reachable year. If this ever
+      # fires, something about this cell doesn't match that assumption and
+      # the result deserves a closer look.
+      if (!isTRUE(ev$net_emis < 0)) {
+        warning("T* = ", ev$T, " for scenario '", scenario, "' does not arrive ",
+                "from above (net_emissions_at_T = ", round(ev$net_emis, 3),
+                "). This contradicts the monotonicity argument the earliest-",
+                "reachable search relies on (see file header) -- treat this ",
+                "cell's result with caution.")
+      }
+    } else {
+      H_val <- NA_real_
     }
-    evaluations <- collect_evaluations()
+
     list(
       T_star                = if (converged) ev$T else NA_real_,
-      optimum_type          = if (converged) optimum_type else NA_character_,
+      optimum_type          = if (converged) "earliest_reachable" else NA_character_,
       converged             = converged,
-      feasible              = converged && isTRUE(ev$ok),
-      hamiltonian_at_T_star = if (converged) ev$H else NA_real_,
-      solution              = ev$sol,
-      prescan_trace         = prescan_trace,
-      evaluations           = evaluations,
-      outer_iterations      = outer_iterations,
-      best_abs_H            = if (any(evaluations$valid, na.rm = TRUE)) {
-        min(abs(evaluations$H[evaluations$valid]), na.rm = TRUE)
-      } else NA_real_,
+      feasible              = converged && isTRUE(ev$reachable),
+      hamiltonian_at_T_star = H_val,
+      solution              = if (converged) ev$sol else NULL,
+      evaluations           = collect_evaluations(),
+      outer_iterations      = bisection_iterations,
       infeasible_reason     = infeasible_reason,
       t_min                 = t_min,
       t_max                 = t_max,
@@ -475,230 +435,63 @@ optimal_control_free_terminal_time <- function(parameter_df,
   }
 
   # ============================================================================
-  # Infeasible: no valid return year anywhere in [t_min, t_max]
+  # Step 1: is the target reachable anywhere in [t_min, t_max] at all?
   # ============================================================================
 
-  scan_valid <- prescan_trace[prescan_trace$valid & is.finite(prescan_trace$H),
-                              , drop = FALSE]
+  ev_max <- evaluate_T(t_max)
 
-  if (nrow(scan_valid) == 0) {
-    reason <- if (any(prescan_trace$inner_converged)) {
-      "target only reachable from below (no post-overshoot return) at every scanned year"
-    } else {
-      "inner shooting failed to converge at every scanned terminal year"
+  if (!ev_max$reachable) {
+    if (verbose) {
+      cat("\nINFEASIBLE: target not reachable even at t_max =", t_max, "\n")
     }
-    if (verbose) cat("\nINFEASIBLE:", reason, "\n")
-
-    ev_tmax <- memo[[as.character(t_max)]]
-
     res <- build_result(
-      ev = list(T = NA_real_, ok = FALSE, H = NA_real_, sol = NULL),
-      converged = FALSE, optimum_type = NA_character_,
-      infeasible_reason = reason
+      ev = list(T = NA_real_, reachable = FALSE, net_emis = NA_real_, sol = NULL),
+      converged = FALSE,
+      infeasible_reason = paste0("target not reachable by t_max = ", t_max)
     )
-    res$final_temperature_at_t_max <-
-      if (!is.null(ev_tmax) && !is.null(ev_tmax$sol)) {
-        ev_tmax$sol$final_temperature
-      } else NA_real_
+    res$final_temperature_at_t_max <- if (!is.null(ev_max$sol)) {
+      ev_max$sol$final_temperature
+    } else NA_real_
     return(res)
   }
 
   # ============================================================================
-  # Interior optimum: secant on T within a sign-change bracket
+  # Step 2: edge case -- is t_min itself already reachable?
   # ============================================================================
-  # Runs when the pre-scan (or boundary-edge refinement below) finds
-  # consecutive valid years with opposite H signs — the textbook case.
 
-  interior_search <- function(T_lo, H_lo, T_hi, H_hi) {
+  ev_min <- evaluate_T(t_min)
 
+  if (ev_min$reachable) {
     if (verbose) {
-      cat(sprintf("\nBracket found: T in [%d, %d], H in [%+.4f, %+.4f]\n",
-                  T_lo, T_hi, H_lo, H_hi))
+      cat("\nt_min itself is reachable; T* = t_min",
+          "(earlier returns may exist below the search range)\n")
     }
-
-    best_ev    <- NULL
-    best_abs_H <- Inf
-    for (Tb in c(T_lo, T_hi)) {
-      ev <- evaluate_H(Tb)  # memoized, no re-solve
-      if (abs(ev$H) < best_abs_H) {
-        best_ev <- ev
-        best_abs_H <- abs(ev$H)
-      }
-    }
-
-    for (iteration in seq_len(max_outer_iterations)) {
-      outer_iterations <<- outer_iterations + 1L
-
-      # Bracket collapsed to adjacent years: the discrete optimum is the
-      # endpoint with the smaller |H|
-      if ((T_hi - T_lo) <= 1L) {
-        ev_lo <- evaluate_H(T_lo)
-        ev_hi <- evaluate_H(T_hi)
-        ev <- if (abs(ev_lo$H) <= abs(ev_hi$H)) ev_lo else ev_hi
-        return(build_result(ev, converged = TRUE, optimum_type = "interior"))
-      }
-
-      # Secant proposal, rounded to an integer year; bisection fallback when
-      # the proposal is non-finite, leaves the open bracket, or lands on an
-      # already-evaluated endpoint
-      T_new <- as.integer(round(T_lo - H_lo * (T_hi - T_lo) / (H_hi - H_lo)))
-      if (!is.finite(T_new) || T_new <= T_lo || T_new >= T_hi) {
-        T_new <- as.integer(floor((T_lo + T_hi) / 2))
-      }
-
-      ev <- evaluate_H(T_new)
-
-      if (!ev$ok) {
-        # Invalid year inside the bracket (should be rare). Try the bisection
-        # midpoint instead; if that also fails, return the best attempt.
-        T_new <- as.integer(floor((T_lo + T_hi) / 2))
-        ev <- evaluate_H(T_new)
-        if (!ev$ok) {
-          if (verbose) {
-            cat("Invalid candidate years inside the bracket; returning best attempt\n")
-          }
-          return(build_result(
-            if (!is.null(best_ev)) best_ev else ev, converged = FALSE,
-            optimum_type = NA_character_,
-            infeasible_reason = "invalid candidate years inside the secant bracket"
-          ))
-        }
-      }
-
-      if (abs(ev$H) < best_abs_H) {
-        best_ev <- ev
-        best_abs_H <- abs(ev$H)
-      }
-
-      if (verbose) {
-        cat(sprintf("  Outer iter %2d: T = %d, H(T) = %+.4f, bracket [%d, %d]\n",
-                    iteration, ev$T, ev$H, T_lo, T_hi))
-      }
-
-      if (abs(ev$H) <= outer_tolerance) {
-        return(build_result(ev, converged = TRUE, optimum_type = "interior"))
-      }
-
-      # Narrow the bracket, preserving the sign change
-      if (sign(ev$H) == sign(H_lo)) {
-        T_lo <- ev$T; H_lo <- ev$H
-      } else {
-        T_hi <- ev$T; H_hi <- ev$H
-      }
-    }
-
-    if (verbose) {
-      cat("Outer search reached max iterations; returning best attempt\n")
-    }
-    build_result(
-      best_ev, converged = FALSE, optimum_type = NA_character_,
-      infeasible_reason = "outer search reached max iterations without collapsing the bracket"
-    )
-  }
-
-  # Look for a sign change between consecutive VALID scan points
-  if (nrow(scan_valid) >= 2) {
-    for (k in 2:nrow(scan_valid)) {
-      if (sign(scan_valid$H[k - 1]) != sign(scan_valid$H[k])) {
-        return(interior_search(scan_valid$T[k - 1], scan_valid$H[k - 1],
-                               scan_valid$T[k],     scan_valid$H[k]))
-      }
-    }
+    return(build_result(ev_min, converged = TRUE, bisection_iterations = 0L))
   }
 
   # ============================================================================
-  # Boundary optimum: all valid H(T) share one sign
+  # Step 3: bisect on reachability to find the true earliest reachable year
   # ============================================================================
-  # H = dV/dT (verified numerically for this model). All H > 0 means the cost
-  # of returning by T rises with T everywhere it is achievable, so the
-  # cheapest achievable return is the EARLIEST feasible year — a boundary
-  # minimum. Refine the feasibility edge to 1-year resolution by integer
-  # bisection between the last invalid and first valid known years. (All
-  # H < 0 — never observed — would symmetrically give the latest year.)
+  # Reachability is monotone in T (false, ..., false, true, ..., true; see
+  # file header for why), so standard integer bisection between the known-
+  # unreachable t_min and known-reachable t_max converges on the true
+  # earliest reachable year in ceiling(log2(t_max - t_min)) steps -- no
+  # coarse grid, no risk of stepping over a narrow feasible window.
 
-  if (all(scan_valid$H > 0)) {
+  lo <- t_min                     # known not reachable
+  hi <- t_max; ev_hi <- ev_max     # known reachable
+  iterations <- 0L
 
-    T_first_valid <- min(scan_valid$T)
-    below <- scan_years[scan_years < T_first_valid]
-
-    if (length(below) == 0) {
-      # Even the first candidate year is a valid return: t_min is binding
-      if (verbose) {
-        cat("\nAll valid H(T) > 0 and t_min itself is feasible;",
-            "T* = t_min (earlier returns may exist below the search range)\n")
-      }
-      T_edge <- T_first_valid
+  while (hi - lo > 1L && iterations < max_bisection_iterations) {
+    iterations <- iterations + 1L
+    mid <- as.integer(floor((lo + hi) / 2))
+    ev_mid <- evaluate_T(mid)
+    if (ev_mid$reachable) {
+      hi <- mid; ev_hi <- ev_mid
     } else {
-      lo <- max(below)          # invalid (or unusable) scanned year
-      hi <- T_first_valid       # valid year
-      if (verbose) {
-        cat(sprintf("\nAll valid H(T) > 0: refining earliest feasible return year in (%d, %d]...\n",
-                    lo, hi))
-      }
-      while (hi - lo > 1L) {
-        outer_iterations <- outer_iterations + 1L
-        mid <- as.integer(floor((lo + hi) / 2))
-        ev_mid <- evaluate_H(mid)
-        if (verbose) {
-          cat(sprintf("  T = %d: %s\n", mid,
-                      if (ev_mid$ok) sprintf("valid, H = %+.4f", ev_mid$H)
-                      else "not a valid return"))
-        }
-        if (ev_mid$ok) hi <- mid else lo <- mid
-      }
-      T_edge <- hi
+      lo <- mid
     }
-
-    ev_edge <- evaluate_H(T_edge)
-
-    # If the refined edge year turns out to have H < 0, an interior crossing
-    # exists between the edge and the first coarse valid point after all —
-    # hand over to the secant
-    if (ev_edge$H < 0) {
-      T_above <- min(scan_valid$T[scan_valid$T > T_edge])
-      ev_above <- evaluate_H(T_above)
-      return(interior_search(T_edge, ev_edge$H, T_above, ev_above$H))
-    }
-
-    return(build_result(ev_edge, converged = TRUE,
-                        optimum_type = "boundary_earliest"))
   }
 
-  # All valid H < 0: cost falls with T everywhere achievable; the optimum is
-  # the latest feasible year (t_max-limited if the last scan point is valid)
-  T_last_valid <- max(scan_valid$T)
-  above <- scan_years[scan_years > T_last_valid]
-
-  if (length(above) == 0) {
-    T_edge <- T_last_valid
-    if (verbose) {
-      cat("\nAll valid H(T) < 0; T* = t_max — optimum truncated by the search horizon\n")
-    }
-  } else {
-    lo <- T_last_valid
-    hi <- min(above)
-    if (verbose) {
-      cat(sprintf("\nAll valid H(T) < 0: refining latest feasible year in [%d, %d)...\n",
-                  lo, hi))
-    }
-    while (hi - lo > 1L) {
-      outer_iterations <- outer_iterations + 1L
-      mid <- as.integer(floor((lo + hi) / 2))
-      ev_mid <- evaluate_H(mid)
-      if (ev_mid$ok) lo <- mid else hi <- mid
-    }
-    T_edge <- lo
-  }
-
-  ev_edge <- evaluate_H(T_edge)
-
-  if (ev_edge$H > 0) {
-    # Symmetric hand-over: crossing between the last coarse valid point and
-    # the refined edge
-    T_below <- max(scan_valid$T[scan_valid$T < T_edge])
-    ev_below <- evaluate_H(T_below)
-    return(interior_search(T_below, ev_below$H, T_edge, ev_edge$H))
-  }
-
-  build_result(ev_edge, converged = TRUE, optimum_type = "boundary_latest")
+  build_result(ev_hi, converged = TRUE, bisection_iterations = iterations)
 }

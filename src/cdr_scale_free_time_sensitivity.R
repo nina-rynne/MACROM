@@ -26,27 +26,32 @@
 #      cdr_scale_sensitivity.R), record T_star = 2100 with
 #      optimum_type = "feasible_by_2100" and years_beyond_2100 = 0.
 #   2. Only for cells INFEASIBLE at 2100, run
-#      optimal_control_free_terminal_time() over [2100, 2200] to find the
-#      earliest year the 1.5°C return becomes achievable. The headline
-#      output is years_beyond_2100 — how much longer these combinations
-#      need beyond the conventional deadline.
+#      optimal_control_free_terminal_time() over [2100, t_max] to find the
+#      earliest year cumulative emissions can first be brought down to the
+#      1.5°C-consistent target (the year the historical overshoot backlog
+#      is cleared — see optimal_control_free_time.R for what this does and
+#      doesn't imply about years after T*). The headline output is
+#      years_beyond_2100 — how much longer these combinations need beyond
+#      the conventional deadline.
 #
-# WHY THE SEARCH STARTS AT 2100 (not the deployment start year): Phase 2
-# validation showed that for strong-CDR cells with generous deadlines, the
-# cost-optimal solution of the equality-endpoint problem x(T) = target can
-# arrive at the target FROM BELOW (overshoot, drawdown below the budget,
-# then drift back up to the equality constraint at T). "Earliest year whose
-# optimal solution arrives descending" is then a meaningless object. Cells
-# that are infeasible at 2100 cannot exhibit this: they are still above the
-# budget at 2100, so every solution on [2100, 2200] arrives from above and
-# the feasibility-edge search is well-behaved (single solution branch,
-# H(T) = dV/dT > 0, T* = earliest achievable return).
+# WHY THE SEARCH STARTS AT 2100 (not the deployment start year): cells
+# infeasible at 2100 are, by construction, still above budget at that point
+# — no control path can bring cumulative emissions down to target that
+# early. Searching for the EARLIEST reachable year at or after 2100
+# therefore always lands on a genuine descent through the target: an
+# instant earlier the target wasn't reachable at all, so the earliest
+# reachable year cannot be a later, already-past, drifted-back-up touch of
+# the target (which is possible at OTHER years further out, once CDR has
+# overshot the target and is easing off — see optimal_control_free_time.R
+# for the full argument and why no extra "arrived from above" filter is
+# needed once the search asks specifically for the earliest year).
 #
 # Feasibility philosophy (matching cdr_scale_sensitivity.R):
 # Every K/r/scenario combination always produces a result row. feasible =
-# TRUE when the cell is feasible by 2100 OR the free-time search converged
-# on a genuine return year within [2100, 2200]; otherwise T_star = NA and
-# metric columns carry the best-effort diagnostics available.
+# TRUE when the cell is feasible by 2100 OR the free-time search found a
+# genuine, earliest-reachable return year within [2100, t_max]; otherwise
+# T_star = NA and metric columns carry the best-effort diagnostics
+# available.
 #
 # Parallel strategy (matching cdr_scale_sensitivity.R): parLapply() across
 # K/r combinations, one data frame per combination, bind at the end.
@@ -55,9 +60,9 @@
 # workflow chunk): optimal_control_capacity.R (NOT optimal_control_core.R),
 # capacity_helpers.R, optimal_control_free_time.R, cdr_scale_sensitivity.R
 # (for build_cdr_scale_grid(), reused unchanged). emissions_df/economic_df
-# must extend to t_max (build with end_year = 2200).
+# must extend to t_max.
 #
-# Version: 1.0.0
+# Version: 2.0.0
 # Last updated: July 2026
 # ==============================================================================
 
@@ -254,8 +259,8 @@ package_by2100_result <- function(solution_2100, K_val, r_val, scenario) {
 #' final_temperature <= 1.5 + feasibility_temp_tolerance). Feasible cells are
 #' packaged directly. Stage 2, for infeasible cells only, searches
 #' [2100, t_max] with optimal_control_free_terminal_time() for the earliest
-#' achievable return year. See the file header for why the search is
-#' restricted to years beyond 2100.
+#' year the target becomes reachable at all. See the file header for why the
+#' search is restricted to years beyond 2100.
 #'
 #' @param parameter_df Single-row parameter data frame
 #' @param emissions_df Emissions data frame extending to t_max
@@ -264,12 +269,9 @@ package_by2100_result <- function(solution_2100, K_val, r_val, scenario) {
 #' @param cdr_capacity_function CDR capacity function for this K/r cell
 #' @param K_val,r_val Grid coordinates (recorded in the result row)
 #' @param t_max Latest candidate return year (default: 2200)
-#' @param prescan_step Pre-scan spacing over [2100, t_max] (default: 10)
 #' @param mitigation_delay_years,cdr_delay_years Deployment delays
 #' @param use_mitigation_capacity_limit,mitigation_capacity_function
 #'   Mitigation capacity settings passed to both stages
-#' @param require_return_from_above Passed to the free-time solver
-#'   (default: TRUE; automatic for cells infeasible at 2100, kept as a guard)
 #' @param feasibility_temp_tolerance Temperature tolerance for the stage-1
 #'   feasibility test in °C (default: 0.05, matching package_scale_result())
 #'
@@ -282,12 +284,10 @@ solve_free_time_cell <- function(parameter_df,
                                  K_val,
                                  r_val,
                                  t_max                         = 2200,
-                                 prescan_step                  = 10,
                                  mitigation_delay_years        = 0,
                                  cdr_delay_years               = 0,
                                  use_mitigation_capacity_limit = FALSE,
                                  mitigation_capacity_function  = NULL,
-                                 require_return_from_above     = TRUE,
                                  feasibility_temp_tolerance    = 0.05) {
 
   # ----------------------------------------------------------------------------
@@ -333,14 +333,12 @@ solve_free_time_cell <- function(parameter_df,
     scenario                      = scenario,
     t_min                         = 2100,
     t_max                         = t_max,
-    prescan_step                  = prescan_step,
     mitigation_delay_years        = mitigation_delay_years,
     cdr_delay_years               = cdr_delay_years,
     use_mitigation_capacity_limit = use_mitigation_capacity_limit,
     mitigation_capacity_function  = mitigation_capacity_function,
     use_cdr_capacity_limit        = TRUE,
     cdr_capacity_function         = cdr_capacity_function,
-    require_return_from_above     = require_return_from_above,
     verbose                       = FALSE
   )
 
@@ -472,17 +470,52 @@ estimate_free_time_sweep_runtime <- function(parameter_df,
 #' optimum_type values in the output:
 #'   - "feasible_by_2100":  cell meets the target under the standard fixed
 #'                          T = 2100 solve (stage 1)
-#'   - "boundary_earliest": earliest achievable return year in (2100, t_max]
-#'   - "interior":          genuine interior H(T*) = 0 optimum (not observed
-#'                          in validation, handled per Lenhart & Workman)
-#'   - "boundary_latest":   all valid H < 0 (not observed)
+#'   - "earliest_reachable": earliest year in (2100, t_max] the target
+#'                          becomes reachable at all -- see
+#'                          optimal_control_free_time.R for why this is also
+#'                          always the cost-optimal year and is guaranteed
+#'                          to arrive via a genuine descent from above
 #'   - NA:                  no return achievable by t_max (T_star = NA,
 #'                          feasible = FALSE) or unhandled solver error (see
 #'                          infeasible_reason)
 #'
 #' Structure mirrors run_cdr_scale_sensitivity(): same grid input (use
-#' build_cdr_scale_grid() from cdr_scale_sensitivity.R), same parLapply
-#' parallel skeleton, same always-produce-a-row philosophy.
+#' build_cdr_scale_grid() from cdr_scale_sensitivity.R), same always-produce-
+#' a-row philosophy.
+#'
+#' CHECKPOINTING, PROGRESS, AND LOAD BALANCING (added after a 2500-year,
+#' 51x51, 5-scenario sweep ran 30+ hours with zero visibility into progress,
+#' an accidental laptop sleep raised the possibility of losing all of it,
+#' and process monitoring showed only 2-3 of 13 worker processes were still
+#' active hours into the run -- the rest had gone idle long ago): the grid
+#' is processed in batches of checkpoint_every combinations, dispatched with
+#' clusterApplyLB() rather than one static parLapply() call over the whole
+#' grid. Per-cell cost here is wildly non-uniform (a narrow
+#' feasibility-boundary band in (K, r) costs 100-300x an easy cell -- see
+#' the Aug 2026 boundary probe), and the grid is sorted by K then r, so
+#' those expensive cells cluster together in the sort order; a static,
+#' contiguous per-worker chunk can land almost entirely on that band while
+#' other workers' chunks are all easy cells and finish in seconds.
+#' clusterApplyLB dispatches one task at a time and gives an idle worker the
+#' next queued task immediately, so no worker can get stuck holding a
+#' disproportionate share of the hard cells while the rest sit idle.
+#' checkpoint_every defaults to 5x the core count when parallel specifically
+#' so each worker has multiple tasks to rebalance across per batch (a batch
+#' of exactly n_cores tasks gives the scheduler nothing to rebalance -- one
+#' task per worker either way).
+#'
+#' After each batch, progress (combinations done / total, elapsed time, a
+#' rate-based ETA) is printed and, if checkpoint_path is supplied, partial
+#' results are saved to that file. If checkpoint_path already exists when
+#' the function is called again (e.g. after a crash or a deliberate
+#' restart), previously-completed K/r combinations are loaded and skipped --
+#' only the remaining grid is processed. Worst-case loss on an interruption
+#' is one in-flight batch (checkpoint_every combinations), not the whole
+#' sweep. CAVEAT: the
+#' checkpoint file does not record or validate scenarios/t_max/grid against
+#' the current call -- reusing checkpoint_path across genuinely different
+#' analysis configurations will silently mix incompatible results together.
+#' Use a distinct checkpoint_path per distinct configuration.
 #'
 #' @param parameter_df Single-row data frame containing model parameters
 #' @param emissions_df Emissions data frame extending to t_max
@@ -495,8 +528,6 @@ estimate_free_time_sweep_runtime <- function(parameter_df,
 #' @param t_start CDR deployment start year (default: 2025)
 #' @param t_max Latest candidate return year (default: 2200). emissions_df /
 #'   economic_df must extend at least this far.
-#' @param prescan_step Coarse pre-scan spacing in years over [2100, t_max]
-#'   (default: 10)
 #' @param mitigation_delay_years Years to delay mitigation start (default: 0)
 #' @param cdr_delay_years Years to delay CDR deployment start (default: 0)
 #' @param use_mitigation_capacity_limit Logical: activate mitigation capacity
@@ -504,13 +535,22 @@ estimate_free_time_sweep_runtime <- function(parameter_df,
 #'   eliminate mitigation entirely.
 #' @param mitigation_capacity_function Capacity function for mitigation.
 #'   Required when use_mitigation_capacity_limit = TRUE.
-#' @param require_return_from_above Passed to
-#'   optimal_control_free_terminal_time() (default: TRUE)
 #' @param feasibility_temp_tolerance Temperature tolerance (°C) for the
 #'   stage-1 feasible-by-2100 test (default: 0.05, matching
 #'   package_scale_result() in cdr_scale_sensitivity.R)
 #' @param use_parallel Logical: enable parallel processing (default: TRUE)
 #' @param n_cores Integer number of cores, or NULL for auto-detection
+#' @param checkpoint_path Character file path (e.g.
+#'   "output/checkpoint_2500_51x51.rds") to save partial results to after
+#'   every batch, and to resume from if it already exists. Default NULL
+#'   disables checkpointing entirely (original one-shot behaviour).
+#' @param checkpoint_every Integer: number of grid combinations per batch /
+#'   checkpoint save. Default NULL uses n_cores_actual when parallel (one
+#'   full round of work per core between saves) or 5 when serial.
+#' @param progress_log Character file path for a plain-text, human-tailable
+#'   progress log (one line per batch: timestamp, combinations done,
+#'   elapsed time, ETA). Default NULL prints the same line to console only
+#'   (governed by verbose) without writing a file.
 #' @param save_results Logical: save results to output/ (default: TRUE)
 #' @param verbose Logical: print progress information (default: TRUE)
 #' @param output_dir Character output directory (default: "output")
@@ -549,15 +589,16 @@ run_free_time_scale_sensitivity <- function(parameter_df,
                                             g_initial                     = 2,
                                             t_start                       = 2025,
                                             t_max                         = 2200,
-                                            prescan_step                  = 10,
                                             mitigation_delay_years        = 0,
                                             cdr_delay_years               = 0,
                                             use_mitigation_capacity_limit = FALSE,
                                             mitigation_capacity_function  = NULL,
-                                            require_return_from_above     = TRUE,
                                             feasibility_temp_tolerance    = 0.05,
                                             use_parallel                  = TRUE,
                                             n_cores                       = NULL,
+                                            checkpoint_path               = NULL,
+                                            checkpoint_every              = NULL,
+                                            progress_log                  = NULL,
                                             save_results                  = TRUE,
                                             verbose                       = TRUE,
                                             output_dir                    = "output",
@@ -628,6 +669,22 @@ run_free_time_scale_sensitivity <- function(parameter_df,
   n_scenarios        <- length(scenarios)
   overall_start_time <- Sys.time()
 
+  n_cores_actual <- if (is.null(n_cores)) {
+    max(1, parallel::detectCores() - 1)
+  } else {
+    as.integer(n_cores)
+  }
+
+  if (is.null(checkpoint_every)) {
+    # A batch of exactly n_cores tasks gives clusterApplyLB nothing to
+    # rebalance -- each worker gets exactly one task regardless of
+    # scheduler. Multiple tasks per worker per batch (5x here) is what lets
+    # a worker that finishes an easy cell immediately pick up more queued
+    # work instead of sitting idle until the whole batch closes.
+    checkpoint_every <- if (use_parallel) n_cores_actual * 5 else 5
+  }
+  checkpoint_every <- max(1L, as.integer(checkpoint_every))
+
   if (verbose) {
     cat("=== CDR SCALE FREE-TERMINAL-TIME SENSITIVITY ANALYSIS ===\n")
     cat("Grid size:            ", n_combinations, "combinations (",
@@ -643,9 +700,36 @@ run_free_time_scale_sensitivity <- function(parameter_df,
     cat("t_start:              ", t_start, "\n")
     cat("Mitigation zeroed:    ", use_mitigation_capacity_limit, "\n")
     cat("Parallel processing:  ", use_parallel, "\n")
+    cat("Checkpoint file:      ", if (is.null(checkpoint_path)) "(none)" else checkpoint_path, "\n")
+    cat("Checkpoint batch size:", checkpoint_every, "combinations\n")
     cat("Total cells:          ", n_combinations * n_scenarios,
         "(1 fixed solve each + ~10-15 inner solves where infeasible at 2100)\n\n")
   }
+
+  # ============================================================================
+  # Checkpoint resume: load prior partial results if present
+  # ============================================================================
+  # A checkpoint holds the raw per-combination result data frames already
+  # computed (checkpoint_results) and a K/r lookup of which grid rows they
+  # cover (completed_combinations), used to skip those rows this run.
+
+  checkpoint_results     <- list()
+  completed_combinations <- data.frame(K = numeric(0), r = numeric(0))
+
+  if (!is.null(checkpoint_path) && file.exists(checkpoint_path)) {
+    if (verbose) cat("Found existing checkpoint:", checkpoint_path, "-- resuming\n")
+    prior <- readRDS(checkpoint_path)
+    checkpoint_results     <- prior$checkpoint_results
+    completed_combinations <- prior$completed_combinations
+    if (verbose) {
+      cat(sprintf("  %d of %d combinations already completed; skipping those\n\n",
+                  nrow(completed_combinations), n_combinations))
+    }
+  }
+
+  remaining_grid <- dplyr::anti_join(cdr_grid, completed_combinations, by = c("K", "r"))
+  rownames(remaining_grid) <- NULL
+  n_remaining <- nrow(remaining_grid)
 
   # ============================================================================
   # Define per-combination worker function
@@ -676,12 +760,10 @@ run_free_time_scale_sensitivity <- function(parameter_df,
           K_val                         = K_val,
           r_val                         = r_val,
           t_max                         = t_max,
-          prescan_step                  = prescan_step,
           mitigation_delay_years        = mitigation_delay_years,
           cdr_delay_years               = cdr_delay_years,
           use_mitigation_capacity_limit = use_mitigation_capacity_limit,
           mitigation_capacity_function  = mitigation_capacity_function,
-          require_return_from_above     = require_return_from_above,
           feasibility_temp_tolerance    = feasibility_temp_tolerance
         )
       }, error = function(e) {
@@ -694,120 +776,153 @@ run_free_time_scale_sensitivity <- function(parameter_df,
   }
 
   # ============================================================================
-  # Execute grid sweep: parallel or serial
+  # Execute the remaining grid in checkpointed batches
   # ============================================================================
+  # Unlike a single parLapply() over the whole grid (which returns nothing
+  # until every combination is done), the grid is processed in
+  # checkpoint_every-sized batches with one shared cluster reused across
+  # batches -- periodic progress output and a save point after every batch,
+  # with no per-batch cluster startup cost.
 
-  if (use_parallel && n_combinations > 1) {
+  if (n_remaining == 0) {
 
-    n_cores_actual <- if (is.null(n_cores)) {
-      max(1, parallel::detectCores() - 1)
-    } else {
-      as.integer(n_cores)
-    }
+    if (verbose) cat("All combinations already completed in checkpoint -- nothing to run\n")
 
-    if (verbose) {
-      cat("Starting parallel sweep with", n_cores_actual, "cores...\n")
-    }
+  } else {
 
-    parallel_success <- tryCatch({
-
-      cl <- parallel::makeCluster(n_cores_actual)
-
-      parallel::clusterEvalQ(cl, { library(dplyr) })
-
-      parallel::clusterExport(
-        cl,
-        varlist = c(
-          # Functions defined in this file
-          "run_one_combination",
-          "solve_free_time_cell",
-          "package_free_time_result",
-          "package_by2100_result",
-          "package_free_time_error_result",
-          # Free-time solver chain (must be sourced before calling this)
-          "optimal_control_free_terminal_time",
-          "compute_terminal_hamiltonian",
-          "truncate_scenario_data",
-          "optimal_control_shooting",
-          "optimal_control_solve",
-          # Capacity helper functions
-          "make_logistic_from_zero",
-          "make_zero_capacity",
-          "make_exponential_capacity",
-          "make_logistic_capacity",
-          "make_linear_capacity",
-          "make_piecewise_capacity",
-          "make_power_capacity",
-          # Data objects
-          "parameter_df",
-          "emissions_df",
-          "economic_df",
-          "scenarios",
-          # Scalar parameters
-          "g_initial",
-          "t_start",
-          "t_max",
-          "prescan_step",
-          "mitigation_delay_years",
-          "cdr_delay_years",
-          "use_mitigation_capacity_limit",
-          "mitigation_capacity_function",
-          "require_return_from_above",
-          "feasibility_temp_tolerance"
-        ),
-        envir = environment()
-      )
-
-      parallel::clusterExport(cl, "cdr_grid", envir = environment())
-
-      results_list <- parallel::parLapply(
-        cl  = cl,
-        X   = seq_len(n_combinations),
-        fun = function(i) {
-          run_one_combination(cdr_grid$K[i], cdr_grid$r[i])
+    cl <- NULL
+    if (use_parallel && n_remaining > 1) {
+      if (verbose) cat("Starting parallel sweep with", n_cores_actual, "cores...\n")
+      cl <- tryCatch({
+        cl0 <- parallel::makeCluster(n_cores_actual)
+        parallel::clusterEvalQ(cl0, { library(dplyr) })
+        parallel::clusterExport(
+          cl0,
+          varlist = c(
+            # Functions defined in this file
+            "run_one_combination",
+            "solve_free_time_cell",
+            "package_free_time_result",
+            "package_by2100_result",
+            "package_free_time_error_result",
+            # Free-time solver chain (must be sourced before calling this)
+            "optimal_control_free_terminal_time",
+            "compute_terminal_hamiltonian",
+            "truncate_scenario_data",
+            "optimal_control_shooting",
+            "optimal_control_solve",
+            # Capacity helper functions
+            "make_logistic_from_zero",
+            "make_zero_capacity",
+            "make_exponential_capacity",
+            "make_logistic_capacity",
+            "make_linear_capacity",
+            "make_piecewise_capacity",
+            "make_power_capacity",
+            # Data objects
+            "parameter_df",
+            "emissions_df",
+            "economic_df",
+            "scenarios",
+            # Scalar parameters
+            "g_initial",
+            "t_start",
+            "t_max",
+            "mitigation_delay_years",
+            "cdr_delay_years",
+            "use_mitigation_capacity_limit",
+            "mitigation_capacity_function",
+            "feasibility_temp_tolerance"
+          ),
+          envir = environment()
+        )
+        cl0
+      }, error = function(e) {
+        if (verbose) {
+          cat("Parallel cluster setup failed:", e$message, "\n")
+          cat("Falling back to serial processing...\n")
         }
+        NULL
+      })
+      if (is.null(cl)) use_parallel <- FALSE
+    }
+
+    if (verbose && !use_parallel) {
+      cat("Running serial sweep across", n_remaining, "remaining combinations...\n")
+    }
+
+    batch_starts    <- seq(1L, n_remaining, by = checkpoint_every)
+    sweep_start     <- Sys.time()
+    n_done_this_run <- 0L
+
+    for (batch_start in batch_starts) {
+
+      batch_end  <- min(batch_start + checkpoint_every - 1L, n_remaining)
+      batch_rows <- remaining_grid[batch_start:batch_end, , drop = FALSE]
+
+      if (use_parallel && !is.null(cl)) {
+        parallel::clusterExport(cl, "batch_rows", envir = environment())
+        # clusterApplyLB(), not parLapply(): parLapply splits the batch into
+        # one static, contiguous chunk per worker up front and never
+        # rebalances. Per-cell cost here is wildly non-uniform (a narrow
+        # feasibility-boundary band costs 100-300x an easy cell -- see the
+        # Aug 2026 boundary probe), and the grid is sorted by K then r, so
+        # boundary cells cluster together in the sort order. A worker whose
+        # static chunk happens to cover that band gets stuck for hours while
+        # workers with easy chunks finish in seconds and sit permanently
+        # idle -- this was directly observed on the live 2500-year sweep
+        # (the same 2-3 of 13 processes showed CPU activity across every
+        # check spanning 4+ hours; the rest were long since idle).
+        # clusterApplyLB dispatches one task at a time and gives an idle
+        # worker the next queued task immediately, so no single worker can
+        # get stuck with a disproportionate share of the hard cells. Slightly
+        # more communication overhead per task than parLapply, which is
+        # irrelevant here given individual task costs range from ~1 sec to
+        # several minutes.
+        batch_results <- parallel::clusterApplyLB(
+          cl, seq_len(nrow(batch_rows)),
+          function(i) run_one_combination(batch_rows$K[i], batch_rows$r[i])
+        )
+      } else {
+        batch_results <- lapply(
+          seq_len(nrow(batch_rows)),
+          function(i) run_one_combination(batch_rows$K[i], batch_rows$r[i])
+        )
+      }
+
+      checkpoint_results     <- c(checkpoint_results, batch_results)
+      completed_combinations <- dplyr::bind_rows(completed_combinations,
+                                                 batch_rows[, c("K", "r")])
+      n_done_this_run <- n_done_this_run + nrow(batch_rows)
+
+      elapsed_min <- as.numeric(difftime(Sys.time(), sweep_start, units = "mins"))
+      rate        <- if (elapsed_min > 0) n_done_this_run / elapsed_min else NA_real_
+      eta_min     <- if (!is.na(rate) && rate > 0) {
+        (n_remaining - n_done_this_run) / rate
+      } else NA_real_
+
+      progress_msg <- sprintf(
+        "[%s] %d/%d this run (%d/%d overall) | %.1f min elapsed this run | ETA ~%s\n",
+        format(Sys.time(), "%H:%M:%S"), n_done_this_run, n_remaining,
+        nrow(completed_combinations), n_combinations, elapsed_min,
+        if (is.na(eta_min)) "unknown" else sprintf("%.0f min (%.1f hr)", eta_min, eta_min / 60)
       )
 
-      parallel::stopCluster(cl)
-      TRUE
+      if (verbose) cat(progress_msg)
+      if (!is.null(progress_log)) cat(progress_msg, file = progress_log, append = TRUE)
 
-    }, error = function(e) {
-      if (verbose) {
-        cat("Parallel execution failed:", e$message, "\n")
-        cat("Falling back to serial processing...\n")
+      if (!is.null(checkpoint_path)) {
+        checkpoint_dir <- dirname(checkpoint_path)
+        if (!dir.exists(checkpoint_dir)) dir.create(checkpoint_dir, recursive = TRUE)
+        saveRDS(
+          list(checkpoint_results = checkpoint_results,
+               completed_combinations = completed_combinations),
+          checkpoint_path
+        )
       }
-      if (exists("cl") && !is.null(cl)) {
-        tryCatch(parallel::stopCluster(cl), error = function(e) NULL)
-      }
-      FALSE
-    })
-
-    if (!parallel_success) {
-      use_parallel <- FALSE
-    }
-  }
-
-  if (!use_parallel || n_combinations == 1) {
-
-    if (verbose) {
-      cat("Running serial sweep across", n_combinations, "combinations...\n")
     }
 
-    results_list <- vector("list", n_combinations)
-
-    for (i in seq_len(n_combinations)) {
-      K_i <- cdr_grid$K[i]
-      r_i <- cdr_grid$r[i]
-
-      if (verbose) {
-        elapsed <- round(
-          as.numeric(difftime(Sys.time(), overall_start_time, units = "mins")), 1)
-        cat(sprintf("  Combination %d / %d: K = %.1f, r = %.4f  (%.1f min elapsed)\n",
-                    i, n_combinations, K_i, r_i, elapsed))
-      }
-
-      results_list[[i]] <- run_one_combination(K_i, r_i)
-    }
+    if (!is.null(cl)) parallel::stopCluster(cl)
   }
 
   # ============================================================================
@@ -816,7 +931,7 @@ run_free_time_scale_sensitivity <- function(parameter_df,
 
   if (verbose) cat("\nCombining results...\n")
 
-  results_list <- results_list[!sapply(results_list, is.null)]
+  results_list <- checkpoint_results[!sapply(checkpoint_results, is.null)]
 
   if (length(results_list) == 0) {
     stop("No valid results were produced. Check that the solver functions are ",
@@ -893,13 +1008,13 @@ run_free_time_scale_sensitivity <- function(parameter_df,
     t_start                       = t_start,
     t_min                         = 2100,
     t_max                         = t_max,
-    prescan_step                  = prescan_step,
     scenarios                     = scenarios,
     mitigation_delay_years        = mitigation_delay_years,
     cdr_delay_years               = cdr_delay_years,
     use_mitigation_capacity_limit = use_mitigation_capacity_limit,
-    require_return_from_above     = require_return_from_above,
     use_parallel                  = use_parallel,
+    checkpoint_path               = checkpoint_path,
+    checkpoint_every              = checkpoint_every,
     start_time                    = overall_start_time,
     end_time                      = Sys.time(),
     total_runtime_minutes         = as.numeric(total_runtime)

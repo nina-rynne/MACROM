@@ -125,12 +125,12 @@ economic_df <- interpolate_ssp_economic(
 )
 ```
 
-```{r data_preparation_2300_call}
+```{r data_preparation_2500_call}
 # ==============================================================================
-# Data Preparation — Extended Horizon (2020-2300)
+# Data Preparation — Extended Horizon (2020-2500)
 # ==============================================================================
-# Import and prepare emissions and economic data extended to 2300 on a
-# decadal time step (data-raw/data source: emissions_2300.csv, gwp_2300.csv).
+# Import and prepare emissions and economic data extended to 2500 on a
+# decadal time step (data source: emissions_2500.csv, gwp_2500.csv).
 # Same import/interpolation logic as data_preparation_call above, just with
 # the longer-horizon source files. Used by analyses that need a genuine
 # (non flat-lined) horizon beyond 2100, e.g. free_time_scale_sensitivity_analysis.
@@ -138,24 +138,24 @@ economic_df <- interpolate_ssp_economic(
 # Source data preparation functions
 source(here::here("src", "data_preparation.R"))
 
-# Import emissions and economic data (extended to 2300)
-emissions_imported_2300 <- import_ssp_emissions("emissions_extension_2300.csv")
-economic_imported_2300  <- import_ssp_economic("gwp_extension_2300.csv")
+# Import emissions and economic data (extended to 2500)
+emissions_imported_2500 <- import_ssp_emissions("emissions_2500.csv")
+economic_imported_2500  <- import_ssp_economic("gwp_2500.csv")
 
-# Interpolate data to annual time step (2020-2300)
+# Interpolate data to annual time step (2020-2500)
 # USER CHOICE: Modify start_year, end_year, or dt if different time range/step is needed
-emissions_df_2300 <- interpolate_ssp_emissions(
-  emissions_df = emissions_imported_2300,
+emissions_df_2500 <- interpolate_ssp_emissions(
+  emissions_df = emissions_imported_2500,
   dt = 1,
   start_year = 2025,
-  end_year = 2300
+  end_year = 2500
 )
 
-economic_df_2300 <- interpolate_ssp_economic(
-  economic_df = economic_imported_2300,
+economic_df_2500 <- interpolate_ssp_economic(
+  economic_df = economic_imported_2500,
   dt = 1,
   start_year = 2025,
-  end_year = 2300
+  end_year = 2500
 )
 ```
 
@@ -530,12 +530,12 @@ source(here::here("src", "cdr_scale_sensitivity.R"))
 # USER CHOICE: CDR K range (carrying capacity, GtCO2/year)
 K_min <- 25     # Minimum CDR carrying capacity
 K_max <- 200    # Maximum CDR carrying capacity
-n_K   <- 51     # Number of K values to test
+n_K   <- 31     # Number of K values to test
 
 # USER CHOICE: CDR r range (growth rate)
 r_min       <- 0.02    # Minimum CDR growth rate
 r_max       <- 0.20    # Maximum CDR growth rate
-n_r         <- 51      # Number of r values to test
+n_r         <- 31      # Number of r values to test
 r_log_scale <- FALSE   # Set TRUE for log-spaced r values
 
 # USER CHOICE: Fixed CDR starting conditions
@@ -543,8 +543,7 @@ g_initial <- 2      # Starting CDR deployment level (GtCO2/year)
 t_start   <- 2025   # Year CDR deployment begins
 
 # USER CHOICE: Scenarios to analyse
-scenarios_to_compare <- c("SSP1-Baseline", "SSP2-Baseline", "SSP3-Baseline",
-                          "SSP4-Baseline", "SSP5-Baseline")
+scenarios_to_compare <- c("SSP1-Baseline")
 
 cdr_scale_sensitivity_results <- run_cdr_scale_sensitivity_from_params(
   K_min        = K_min,
@@ -558,8 +557,8 @@ cdr_scale_sensitivity_results <- run_cdr_scale_sensitivity_from_params(
   t_start      = t_start,
   scenarios    = scenarios_to_compare,
   parameter_df = parameter_df[1, ],
-  emissions_df = emissions_df,
-  economic_df  = economic_df
+  emissions_df = emissions_df_2300,
+  economic_df  = economic_df_2300
 )
 ```
 
@@ -746,22 +745,22 @@ cdr_scale_metrics <- extract_cdr_scale_metrics(
 #            meet the 1.5°C target by 2100 are recorded with T_star = 2100
 #            (optimum_type = "feasible_by_2100", years_beyond_2100 = 0).
 #   Stage 2: cells INFEASIBLE at 2100 get a free-terminal-time search over
-#            (2100, 2300] for the earliest year the return to 1.5°C becomes
+#            (2100, 2500] for the earliest year the return to 1.5°C becomes
 #            achievable (nested shooting: outer search on the terminal year
 #            using the transversality Hamiltonian H(T), inner loop the usual
 #            emissions-gap shooting). The headline output per cell is
 #            years_beyond_2100 — how much longer that CDR scale needs.
 #
-# This chunk uses the EXTENDED-HORIZON data (emissions_df_2300/economic_df_2300,
-# end_year = 2300) built by the data_preparation_2300_call chunk — genuine SSP
+# This chunk uses the EXTENDED-HORIZON data (emissions_df_2500/economic_df_2500,
+# end_year = 2500) built by the data_preparation_2500_call chunk — genuine SSP
 # projections beyond 2100, not flat-lined extrapolation — so the fixed-time
 # chunks above (using emissions_df/economic_df, end_year = 2100) are unaffected.
 #
 # REQUIREMENTS: Must use single parameter set (parameter_df with 1 row).
-#   Run the data_preparation_2300_call chunk first.
+#   Run the data_preparation_2500_call chunk first.
 # OUTPUTS: Saved automatically to output/ directory
 # RUNTIME: Bimodal per cell — feasible-by-2100 cells cost one fixed solve;
-#          infeasible cells run ~10-15 inner solves on horizons up to 2300.
+#          infeasible cells run ~10-15 inner solves on horizons up to 2500.
 #          ALWAYS run the runtime estimate below before a full grid: it times
 #          a few representative cells and extrapolates.
 
@@ -772,20 +771,20 @@ source(here::here("src", "optimal_control_free_time.R"))
 source(here::here("src", "cdr_scale_sensitivity.R"))       # build_cdr_scale_grid()
 source(here::here("src", "cdr_scale_free_time_sensitivity.R"))
 
-if (!exists("emissions_df_2300") || !exists("economic_df_2300")) {
-  stop("emissions_df_2300/economic_df_2300 not found. ",
-       "Please run the data_preparation_2300_call chunk first.")
+if (!exists("emissions_df_2500") || !exists("economic_df_2500")) {
+  stop("emissions_df_2500/economic_df_2500 not found. ",
+       "Please run the data_preparation_2500_call chunk first.")
 }
 
 # USER CHOICE: CDR K range (carrying capacity, GtCO2/year)
 K_min <- 25     # Minimum CDR carrying capacity
 K_max <- 200    # Maximum CDR carrying capacity
-n_K   <- 31     # Number of K values (use 11 for testing, 51 for publication)
+n_K   <- 21     # Number of K values (use 11 for testing, 51 for publication)
 
 # USER CHOICE: CDR r range (growth rate)
 r_min       <- 0.02    # Minimum CDR growth rate
 r_max       <- 0.20    # Maximum CDR growth rate
-n_r         <- 31      # Number of r values (use 11 for testing, 51 for publication)
+n_r         <- 21      # Number of r values (use 11 for testing, 51 for publication)
 r_log_scale <- FALSE   # Set TRUE for log-spaced r values
 
 # USER CHOICE: Fixed CDR starting conditions
@@ -793,7 +792,7 @@ g_initial <- 2      # Starting CDR deployment level (GtCO2/year)
 t_start   <- 2025   # Year CDR deployment begins
 
 # USER CHOICE: Scenarios to analyse (one SSP for testing, five for publication)
-scenarios_to_compare <- c("SSP1-Baseline", "SSP2-Baseline", "SSP3-Baseline", "SSP4-Baseline", "SSP5-Baseline")
+scenarios_to_compare <- c("SSP2-Baseline")
 
 free_time_grid <- build_cdr_scale_grid(
   K_min       = K_min,
@@ -808,42 +807,52 @@ free_time_grid <- build_cdr_scale_grid(
 # ------------------------------------------------------------------------------
 # Runtime estimate from a small timed subset — check this BEFORE the full run
 # ------------------------------------------------------------------------------
-# free_time_runtime <- estimate_free_time_sweep_runtime(
-#   parameter_df = parameter_df[1, ],
-#   emissions_df = emissions_df_2300,
-#   economic_df  = economic_df_2300,
-#   scenarios    = scenarios_to_compare,
-#   cdr_grid     = free_time_grid,
-#   n_sample     = 3,
-#   g_initial    = g_initial,
-#   t_start      = t_start
-# )
+free_time_runtime <- estimate_free_time_sweep_runtime(
+  parameter_df = parameter_df[1, ],
+  emissions_df = emissions_df_2500,
+  economic_df  = economic_df_2500,
+  scenarios    = scenarios_to_compare,
+  cdr_grid     = free_time_grid,
+  n_sample     = 6,
+  g_initial    = g_initial,
+  t_start      = t_start
+)
 
 # ------------------------------------------------------------------------------
 # Full sweep (mitigation zeroed so CDR is the sole control, matching the
 # fixed-time CDR scale sensitivity)
 # ------------------------------------------------------------------------------
+# checkpoint_path/progress_log are named from scenarios_to_compare + grid
+# resolution so a different USER CHOICE configuration above never resumes
+# from (and silently mixes with) an incompatible prior run's checkpoint.
+# While this runs, tail progress from a separate session with (PowerShell):
+#   Get-Content <path shown below> -Wait -Tail 20
+run_tag <- paste0(paste(gsub("-Baseline", "", scenarios_to_compare), collapse = "_"),
+                  "_", n_K, "x", n_r)
+
 free_time_scale_results <- run_free_time_scale_sensitivity(
   parameter_df                  = parameter_df[1, ],
-  emissions_df                  = emissions_df_2300,
-  economic_df                   = economic_df_2300,
+  emissions_df                  = emissions_df_2500,
+  economic_df                   = economic_df_2500,
   scenarios                     = scenarios_to_compare,
   cdr_grid                      = free_time_grid,
   g_initial                     = g_initial,
   t_start                       = t_start,
-  t_max                         = 2300,
+  t_max                         = 2500,
   use_mitigation_capacity_limit = TRUE,
   mitigation_capacity_function  = make_zero_capacity(),
   use_parallel                  = TRUE,
+  checkpoint_path               = here::here("output", paste0("checkpoint_free_time_2500_", run_tag, ".rds")),
+  progress_log                  = here::here("output", paste0("progress_free_time_2500_", run_tag, ".log")),
   save_results                  = TRUE,
-  verbose                       = FALSE
+  verbose                       = TRUE
 )
 
 # Quick look: how many extra years past 2100 does each infeasible cell need?
 with(free_time_scale_results$combined_results, {
   cat("Feasible by 2100:      ", sum(optimum_type == "feasible_by_2100", na.rm = TRUE), "\n")
-  cat("Return in 2101-2300:   ", sum(feasible & T_star > 2100, na.rm = TRUE), "\n")
-  cat("No return by 2300:     ", sum(!feasible), "\n")
+  cat("Return in 2101-2500:   ", sum(feasible & T_star > 2100, na.rm = TRUE), "\n")
+  cat("No return by 2500:     ", sum(!feasible), "\n")
 })
 ```
 
@@ -1574,6 +1583,59 @@ for (level in capacity_levels) {
 dev.off()
 
 cat("Saved multi-page dashboard to:", pdf_path, "\n")
+```
+
+```{r test}
+
+library(here); library(dplyr); library(ggplot2); library(patchwork); library(scales)
+
+source(here::here("src", "cdr_scale_sensitivity_visualisation.R"))
+
+cdr_scale_sensitivity_results <- readRDS(
+  here::here("output", "cdr_scale_free_time_sensitivity_20260825_195408.rds")
+)
+
+cdr_scale_dashboards_combined <- create_cdr_scale_temperature_dashboards_combined(
+  sensitivity_results   = cdr_scale_sensitivity_results,
+  add_contours          = FALSE,
+  add_threshold_line    = FALSE,
+  threshold_value_temp  = 1.5,
+  threshold_value_years = 0.5,
+  show_infeasible       = TRUE,
+  width                 = 297,
+  height                = 140,
+  save_plot             = TRUE,
+  filename              = "cdr_scale_temperature_combined_freetime_2500_SSP1_21x21",
+  verbose               = TRUE
+)
+
+print(cdr_scale_dashboards_combined)
+```
+
+```{r test2}
+
+library(here); library(dplyr); library(ggplot2); library(patchwork); library(scales)
+
+source(here::here("src", "cdr_scale_sensitivity_visualisation.R"))
+source(here::here("src", "cdr_scale_free_time_visualisation.R"))
+
+free_time_scale_results <- readRDS(
+  here::here("output", "cdr_scale_free_time_sensitivity_20260825_195408.rds")
+)
+
+free_time_year_heatmap <- create_free_time_year_heatmap(
+  sensitivity_results = free_time_scale_results,
+  year_limits         = c(2101, 2500),
+  show_infeasible     = TRUE,
+  save_plot           = TRUE,
+  width               = 297,
+  height              = 100,
+  verbose             = TRUE
+)
+
+print(free_time_year_heatmap)
+
+
 ```
 
 # ==============================================================================

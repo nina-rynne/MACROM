@@ -666,9 +666,9 @@ optimal_control_shooting <- function(parameter_df,
     mitigation_capacity_function   = mitigation_capacity_function,
     use_cdr_capacity_limit         = use_cdr_capacity_limit,
     cdr_capacity_function          = cdr_capacity_function,
-    verbose                        = TRUE
+    verbose                        = FALSE
   )
-  
+
   if (result_high$converged) {
     emission_gap_high <- result_high$emission_gap
     if (verbose) {
@@ -737,9 +737,9 @@ optimal_control_shooting <- function(parameter_df,
       mitigation_capacity_function   = mitigation_capacity_function,
       use_cdr_capacity_limit         = use_cdr_capacity_limit,
       cdr_capacity_function          = cdr_capacity_function,
-      verbose                        = TRUE
+      verbose                        = FALSE
     )
-    
+
     if (!result_new$converged) {
       if (verbose) cat("Inner loop did not converge, trying midpoint\n")
       lambda_new <- (lambda_low + lambda_high) / 2
@@ -755,7 +755,7 @@ optimal_control_shooting <- function(parameter_df,
         mitigation_capacity_function   = mitigation_capacity_function,
         use_cdr_capacity_limit         = use_cdr_capacity_limit,
         cdr_capacity_function          = cdr_capacity_function,
-        verbose                        = TRUE
+        verbose                        = FALSE
       )
     }
     
